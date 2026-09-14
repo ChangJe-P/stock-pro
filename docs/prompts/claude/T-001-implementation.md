@@ -2,7 +2,7 @@
 
 아래 프로젝트에서 T-001을 구현해줘.
 
-시작 전에 AGENTS.md, CLAUDE.md, docs/PROJECT_SPEC.md, docs/tasks/T-001-project-foundation.md를 모두 읽어라. 현재 브랜치가 codex/feat/t-001-project-foundation인지 확인하라.
+시작 전에 AGENTS.md, CLAUDE.md, docs/PROJECT_SPEC.md, docs/tasks/T-001-project-foundation.md를 모두 읽어라. 현재 브랜치가 codex/setup인지 확인하라.
 
 작업 문서의 구현 범위와 완료 기준을 충족하는 코드만 작성해라. 실제 주식 데이터, 주문, Notion API, 인증, AWS 기능은 만들지 마라.
 

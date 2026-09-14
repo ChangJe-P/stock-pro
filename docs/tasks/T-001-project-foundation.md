@@ -2,7 +2,7 @@
 id: T-001
 title: Docker 기반 주몽 개발 환경 구성
 status: ready_for_claude
-branch: codex/feat/t-001-project-foundation
+branch: codex/setup
 owner: Claude Code
 reviewer: Codex
 ---
