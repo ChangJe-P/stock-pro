@@ -53,3 +53,8 @@ Claude Code는 완료 주장만 하지 않는다. docs/handoffs/T-XXX-claude-han
 - 가정, 알려진 제한, 미해결 항목
 
 Codex는 인수인계, Git diff, 테스트 결과를 대조해 P0부터 P2까지의 리뷰 결과를 작성한다. 테스트를 실행하지 못했으면 통과로 표현하지 않는다.
+
+## 일일 기록
+
+- 사용자가 주몽의 하루 진행 사항을 Notion과 Obsidian에 정리해 달라고 요청하면 `skills/project-daily-log/SKILL.md`를 읽는다.
+- 기록은 확인된 결정·구현·검증 결과·다음 행동만 포함하며, API 키·비밀번호·토큰·전체 연결 문자열은 포함하지 않는다.
