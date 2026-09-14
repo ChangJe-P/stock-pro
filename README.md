@@ -20,3 +20,4 @@ T-001 Docker 기반 개발 환경 구성이 Claude Code 구현 대기 상태입�
 - Claude Code 프롬프트: docs/prompts/claude/T-001-implementation.md
 - Codex 검증 프롬프트: docs/prompts/codex/T-001-review.md
 - 시장 데이터 수집 Skill: skills/market-data-collector/SKILL.md
+- 환경변수·비밀값 규칙: docs/ENVIRONMENT.md
