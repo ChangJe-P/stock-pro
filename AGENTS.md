@@ -54,6 +54,8 @@ Claude Code는 완료 주장만 하지 않는다. docs/handoffs/T-XXX-claude-han
 
 Codex는 인수인계, Git diff, 테스트 결과를 대조해 P0부터 P2까지의 리뷰 결과를 작성한다. 테스트를 실행하지 못했으면 통과로 표현하지 않는다.
 
+- 사용자가 Claude Code 작업의 검증을 요청하면 `skills/claude-handoff-review/SKILL.md`를 읽고 인수인계·diff·독립 실행 결과를 대조한다.
+
 ## 일일 기록
 
 - 사용자가 주몽의 하루 진행 사항을 Notion과 Obsidian에 정리해 달라고 요청하면 `skills/project-daily-log/SKILL.md`를 읽는다.
