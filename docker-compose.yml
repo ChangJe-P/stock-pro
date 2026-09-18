@@ -1,0 +1,43 @@
+# 세 서비스를 함께 실행하는 로컬 개발 오케스트레이션.
+# 포트·호스트·DB 자격 증명은 .env에서만 읽는다. 값을 여기에 직접 적지 않는다.
+
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    ports:
+      # DBeaver 등 호스트 도구가 접속할 수 있도록 DB 포트를 노출한다.
+      - "${POSTGRES_PORT}:5432"
+    healthcheck:
+      # DB가 실제로 준비된 뒤에만 backend가 시작하도록 확인한다.
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build: ./backend
+    # 비밀값을 포함한 환경변수는 backend 컨테이너에서만 읽는다.
+    env_file:
+      - .env
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "${BACKEND_PORT}:8000"
+
+  frontend:
+    build: ./frontend
+    # frontend에는 공개 가능한 값만 전달한다. 비밀값은 전달하지 않는다.
+    depends_on:
+      - backend
+    ports:
+      - "${FRONTEND_PORT}:3000"
+
+volumes:
+  postgres-data:
