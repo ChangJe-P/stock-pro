@@ -45,13 +45,14 @@ class Settings(BaseSettings):
         return [o.strip() for o in self.cors_allowed_origins.split(",") if o.strip()]
 
     @property
+    def market_data_provider_normalized(self) -> str:
+        return self.market_data_provider.strip().lower()
+
+    @property
     def market_data_configured(self) -> bool:
-        # 제공처·주소·인증키 중 하나라도 비어 있으면 시장 데이터 요청을 보내지 않는다.
-        return bool(
-            self.market_data_provider
-            and self.market_data_base_url
-            and self.market_data_api_key
-        )
+        # T-002에서 승인된 제공처는 pykrx뿐이다. 빈 값이나 다른 값은 미설정으로 본다.
+        # pykrx는 API 키·endpoint가 필요 없으므로 provider 값만 확인한다.
+        return self.market_data_provider_normalized == "pykrx"
 
 
 @lru_cache

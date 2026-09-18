@@ -3,5 +3,7 @@ fastapi>=0.110,<1.0
 uvicorn[standard]>=0.29,<1.0
 pydantic-settings>=2.0,<3.0
 psycopg[binary]>=3.1,<4.0
+# T-002 승인 데이터 제공처. 직접 HTTP 대신 pykrx 호출만 사용한다.
+pykrx
 httpx>=0.27,<1.0
 pytest>=8.0,<9.0
