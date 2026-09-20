@@ -1,15 +1,22 @@
 ---
 task_id: T-002
 branch: codex/data
-commit: 7e6e3c1
+commit: ecfafa8
 status: complete
 ---
 
 # Claude Code 구현 인수인계
 
-> 갱신(2026-09-20): Codex 리뷰(P1 2건·P2 1건) 대응을 반영했다. 아래 "Codex 리뷰 대응" 절 참조. 초기 구현 커밋은 722c5ee, 리뷰 대응 커밋은 7e6e3c1.
+> 갱신(2026-09-20): Codex 1차 리뷰(P1 2건·P2 1건) 대응. 초기 구현 커밋 722c5ee, 1차 대응 커밋 7e6e3c1.
+> 갱신 2(2026-09-20): Codex 2차 리뷰(중복 거래일 P1 1건) 대응, 커밋 ecfafa8. 아래 "Codex 2차 리뷰 대응" 절 참조.
 
-## Codex 리뷰 대응 (P1×2, P2×1)
+## Codex 2차 리뷰 대응 (중복 거래일 P1)
+
+| 지적 | 대응 | 근거 |
+|---|---|---|
+| P1 — 첫 중복 행이 잘못된 값이면 `duplicate_date`가 기록되지 않음 | `validate_and_transform`에서 거래일 중복을 **행 품질 검증 이전에** 먼저 추적하도록 수정. 모든 행의 거래일을 즉시 `seen_dates`에 넣고, 첫 행이 0가격 등으로 제외되어도 같은 날짜의 이후 행은 `duplicate_date`로 남긴다 | `test_duplicate_date_recorded_even_when_first_row_invalid` — 첫 행 0가격+둘째 행 정상에서 `valid=[]`, 사유 `{duplicate_date:1, non_positive_price:1}` 단언. 실DB 재검증에서도 `excluded_reasons={'duplicate_date':1,'non_positive_price':1}` 저장 확인 |
+
+## Codex 1차 리뷰 대응 (P1×2, P2×1)
 
 | 지적 | 대응 | 근거 |
 |---|---|---|
@@ -26,12 +33,12 @@ status: complete
 
 | 파일 | 변경 이유 |
 |---|---|
-| backend/app/market_data.py (신규, 리뷰 대응 수정) | 스키마 초기화, pykrx fetch(adjusted=False), 검증, SHA-256 해시, upsert 적재, 조회, APIRouter 2개. 리뷰 대응: `excluded_reasons` JSONB 컬럼·`summarize_excluded`·`_insert_run`·`record_failed_fetch` 추가 |
+| backend/app/market_data.py (신규, 리뷰 대응 수정) | 스키마 초기화, pykrx fetch(adjusted=False), 검증, SHA-256 해시, upsert 적재, 조회, APIRouter 2개. 1차 리뷰: `excluded_reasons` JSONB·`summarize_excluded`·`_insert_run`·`record_failed_fetch`. 2차 리뷰: `validate_and_transform`에서 거래일 중복을 품질 검증 이전에 먼저 추적 |
 | backend/app/config.py | `market_data_configured`를 `provider==pykrx` 판정으로 최소 수정. base_url/api_key 조건 제거, `market_data_provider_normalized` 추가 |
 | backend/app/main.py | market_data 라우터 include. `/health`는 그대로 유지 |
 | backend/requirements.txt | `pykrx` 최소 의존성 추가(버전 미추측) |
 | backend/requirements.lock.txt | 실제 설치 버전 반영(pykrx 1.2.8, pandas 2.3.3, numpy 2.5.3, requests 2.34.2 등) |
-| backend/tests/test_market_data.py (신규, 리뷰 대응 수정) | pykrx·DB를 mock한 backend 테스트(실제 네트워크 없음). 리뷰 대응: 제외 사유 저장·실패 실행 기록 mock 테스트 2건 추가, GET 오름차순 단언 보강 |
+| backend/tests/test_market_data.py (신규, 리뷰 대응 수정) | pykrx·DB를 mock한 backend 테스트(실제 네트워크 없음). 1차 리뷰: 제외 사유 저장·실패 실행 기록 mock 테스트 2건, GET 오름차순 단언 보강. 2차 리뷰: 첫 중복 행이 0가격인 경계 사례 테스트 추가 |
 | .env.example | `MARKET_DATA_PROVIDER=pykrx`, 나머지 MARKET_DATA_는 불필요·빈 값 명시 |
 | docs/ENVIRONMENT.md | T-002 pykrx 설정 규칙 반영(키·endpoint 미사용·미로그) |
 | README.md | 수집/조회 API 목적·사용법·제한·비투자조언 고지, 설정 전제 |
@@ -46,11 +53,11 @@ status: complete
 | 2. 한 종목·기간 일봉을 pykrx에서 가져와 daily_prices 저장 | `collect_daily_prices`→`store_collection`; 실제 DB 통합 확인(run1 inserted 2) | 충족(적재 경로 실DB 확인, 단 아래 실데이터 항목 참조) |
 | 3. 실행별 출처·기준시각·해시·반환/제외 행수·상태 기록 | `market_data_collection_runs` INSERT(이유별 `excluded_reasons` 포함) + 외부 실패도 `status=failed`로 기록; mock 테스트 2건 + 실DB 재검증(partial·failed 실행 저장 확인) | 충족(리뷰 대응, 실DB 확인) |
 | 4. (종목,거래일) 중복 없이 재수집 시 갱신 | UNIQUE 제약 + `ON CONFLICT DO UPDATE`; 초기 세션 실DB 통합 확인 run2 inserted 0/updated 2, 중복 0건, close 105→107 (upsert SQL은 이번 수정에서 변경 없음) | 충족(실DB 확인) |
-| 5. 입력·기간·중복·누락·OHLC·0/음수 검증, 결과 미은닉 | `validate_and_transform`(사유별 제외), 응답·실행기록 모두에 제외 건수·이유별 건수; mock 테스트 + 실DB에서 `excluded_reasons` 저장 확인 | 충족(리뷰 대응, 실DB 확인) |
+| 5. 입력·기간·중복·누락·OHLC·0/음수 검증, 결과 미은닉 | `validate_and_transform`(사유별 제외; 거래일 중복을 품질 검증 이전에 추적해 첫 행이 잘못돼도 `duplicate_date` 기록), 응답·실행기록 모두에 제외 건수·이유별 건수; 관련 mock 테스트 3건 + 실DB에서 `excluded_reasons`(`duplicate_date` 포함) 저장 확인 | 충족(2차 리뷰 대응, 실DB 확인) |
 | 6. GET 오름차순 조회, 외부 수집 미시작 | `query_daily_prices` ORDER BY trade_date ASC; `test_get_returns_ascending_and_does_not_trigger_fetch`(오름차순 단언) | 충족(리뷰 대응) |
 | 7. 실주문·계좌·KIS·실시간·스케줄러·frontend 미추가 | 신규 코드는 backend 수집/조회에 한정, frontend 무변경 | 충족 |
 | 8. 기존 /health 유지 | main.py health 그대로, TestClient로 동작 확인, `test_health_*` 통과 | 충족 |
-| 9. mock 테스트·기존 테스트 통과, 실네트워크 여부 별도 명시 | pytest 13 passed(전부 mock), 실네트워크는 아래 별도 기록 | 충족 |
+| 9. mock 테스트·기존 테스트 통과, 실네트워크 여부 별도 명시 | pytest 14 passed(전부 mock), 실네트워크는 아래 별도 기록 | 충족 |
 | 10. README·환경문서·핸드오프 기록 | README/ENVIRONMENT/본 문서 | 충족 |
 
 ## 실행과 검증
@@ -59,7 +66,7 @@ status: complete
 
 | 명령 | 결과 |
 |---|---|
-| `pytest` (backend/.venv) | **13 passed** (health 2 + market_data 11). pykrx는 `fetch_ohlcv` mock, DB 접근은 가짜 커넥션/repository mock. 리뷰 대응 테스트 2건 포함 |
+| `pytest` (backend/.venv) | **14 passed** (health 2 + market_data 12). pykrx는 `fetch_ohlcv` mock, DB 접근은 가짜 커넥션/repository mock. 1차 리뷰 테스트 2건 + 2차 리뷰 중복 경계 테스트 1건 포함 |
 | `pip freeze` → requirements.lock.txt | pykrx==1.2.8, pandas==2.3.3, numpy==2.5.3, requests==2.34.2 등 반영(이번 수정에서 의존성 변경 없음) |
 
 리뷰 대응 mock 테스트는 가짜 psycopg 커넥션(`_FakeConn`/`_FakeCursor`)으로 실제 실행 INSERT의 파라미터를 잡아, 이유별 건수(JSONB)와 `failed`/`external_fetch_failed`가 실행 기록에 담기는지 직접 단언한다.
