@@ -3,10 +3,56 @@
 from datetime import date
 
 import pandas as pd
-import pytest
 from fastapi.testclient import TestClient
+from psycopg.types.json import Json
 
 from app import main, market_data
+
+
+class _FakeCursor:
+    """store_collection·record_failed_fetch의 SQL을 실제 DB 없이 잡아내는 가짜 커서."""
+
+    def __init__(self, store):
+        self._store = store
+        self._last = None
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+    def execute(self, sql, params=None):
+        if "INSERT INTO daily_prices" in sql:
+            self._last = {"inserted": True}  # 신규 삽입으로 간주
+        elif "INSERT INTO market_data_collection_runs" in sql:
+            self._store["run_params"] = params
+        else:
+            self._last = None
+
+    def fetchone(self):
+        return self._last
+
+
+class _FakeConn:
+    def __init__(self, store):
+        self._store = store
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+    def cursor(self):
+        return _FakeCursor(self._store)
+
+    def commit(self):
+        pass
+
+
+def _fake_connect(store):
+    return lambda: _FakeConn(store)
 
 
 def _client() -> TestClient:
@@ -133,17 +179,18 @@ def test_collect_rejects_reversed_range():
 
 # --- 조회 API는 외부 수집을 하지 않는다 --------------------------------------
 
-def test_get_does_not_trigger_fetch(monkeypatch):
+def test_get_returns_ascending_and_does_not_trigger_fetch(monkeypatch):
     def _no_fetch(*a, **k):
         raise AssertionError("GET이 외부 수집을 시작했다")
 
     monkeypatch.setattr(market_data, "fetch_ohlcv", _no_fetch)
+    # 저장소는 거래일 오름차순으로 반환한다(SQL ORDER BY). 엔드포인트가 순서를 유지하는지 단언한다.
     monkeypatch.setattr(
         market_data,
         "query_daily_prices",
         lambda t, f, to: [
-            {"ticker": t, "trade_date": date(2024, 1, 3), "close_price": 105},
             {"ticker": t, "trade_date": date(2024, 1, 2), "close_price": 100},
+            {"ticker": t, "trade_date": date(2024, 1, 3), "close_price": 105},
         ],
     )
     res = _client().get(
@@ -151,7 +198,61 @@ def test_get_does_not_trigger_fetch(monkeypatch):
         params={"ticker": "005930", "from_date": "2024-01-01", "to_date": "2024-01-05"},
     )
     assert res.status_code == 200
-    assert len(res.json()["rows"]) == 2
+    dates = [r["trade_date"] for r in res.json()["rows"]]
+    assert dates == ["2024-01-02", "2024-01-03"]
+    assert dates == sorted(dates)
+
+
+# --- 실행 기록: 제외 사유와 실패 실행 (P1) -----------------------------------
+
+def test_collect_records_excluded_reasons(monkeypatch):
+    """제외 행의 이유별 건수가 실행 기록(INSERT)에 저장되는지 확인한다."""
+    monkeypatch.setattr(market_data, "get_settings", lambda: _Settings(configured=True))
+    df = pd.DataFrame(
+        {
+            "시가": [100, 0, 200],
+            "고가": [110, 110, 210],
+            "저가": [90, 90, 190],
+            "종가": [105, 105, 205],
+            "거래량": [1000, 1000, 2000],
+        },
+        index=pd.to_datetime(["2024-01-02", "2024-01-03", "2024-01-10"]),
+    )
+    monkeypatch.setattr(market_data, "fetch_ohlcv", lambda *a, **k: df)
+    store: dict = {}
+    monkeypatch.setattr(market_data, "_connect", _fake_connect(store))
+
+    res = _client().post(
+        "/market-data/daily-prices/collect",
+        json={"ticker": "005930", "from_date": "2024-01-01", "to_date": "2024-01-05"},
+    )
+    assert res.status_code == 200
+    body = res.json()
+    assert body["status"] == "partial"
+    assert body["excluded_reasons"] == {"non_positive_price": 1, "out_of_range": 1}
+
+    # 실행 기록 INSERT의 JSONB 파라미터에 이유별 건수가 담겼는지 확인한다.
+    params = store["run_params"]
+    json_arg = next(p for p in params if isinstance(p, Json))
+    assert json_arg.obj == {"non_positive_price": 1, "out_of_range": 1}
+    assert "partial" in params
+
+
+def test_external_failure_records_failed_run(monkeypatch):
+    """외부 조회 실패도 DB가 정상이면 failed 실행으로 남는지 확인한다."""
+    monkeypatch.setattr(market_data, "get_settings", lambda: _Settings(configured=True))
+    monkeypatch.setattr(market_data, "fetch_ohlcv", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")))
+    store: dict = {}
+    monkeypatch.setattr(market_data, "_connect", _fake_connect(store))
+
+    res = _client().post(
+        "/market-data/daily-prices/collect",
+        json={"ticker": "005930", "from_date": "2024-01-01", "to_date": "2024-01-05"},
+    )
+    assert res.status_code == 502
+    params = store["run_params"]
+    assert "failed" in params
+    assert "external_fetch_failed" in params
 
 
 def test_get_rejects_bad_ticker():

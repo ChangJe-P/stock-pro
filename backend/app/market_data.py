@@ -8,11 +8,13 @@ API 키·endpoint·요청 제한 변수를 읽거나 로그에 남기지 않는�
 import hashlib
 import logging
 import uuid
+from collections import Counter
 from datetime import date, datetime, timezone
 
 import psycopg
 from fastapi import APIRouter, HTTPException, Query, status
 from psycopg.rows import dict_row
+from psycopg.types.json import Json
 from pydantic import BaseModel, Field, model_validator
 
 from .config import get_settings
@@ -44,8 +46,12 @@ CREATE TABLE IF NOT EXISTS market_data_collection_runs (
     updated_rows INTEGER NOT NULL,
     excluded_rows INTEGER NOT NULL,
     status TEXT NOT NULL,
-    failure_reason TEXT
+    failure_reason TEXT,
+    excluded_reasons JSONB NOT NULL DEFAULT '{}'::jsonb
 );
+-- 기존 DB에도 안전하게 이유별 건수 컬럼을 보강한다(마이그레이션 프레임워크 없이 재실행 안전).
+ALTER TABLE market_data_collection_runs
+    ADD COLUMN IF NOT EXISTS excluded_reasons JSONB NOT NULL DEFAULT '{}'::jsonb;
 CREATE TABLE IF NOT EXISTS daily_prices (
     id BIGSERIAL PRIMARY KEY,
     ticker TEXT NOT NULL,
@@ -178,7 +184,31 @@ def _decide_status(returned: int, valid: int, excluded: int) -> tuple[str, str |
     return "partial", "all_rows_excluded"
 
 
+def summarize_excluded(excluded_rows: list[dict]) -> dict[str, int]:
+    """제외 행을 사유별 건수로 집계한다. 값(가격 등)은 담지 않아 안전하다."""
+    return dict(Counter(e["reason"] for e in excluded_rows))
+
+
 # --- 저장 --------------------------------------------------------------------
+
+def _insert_run(cur, run: dict) -> None:
+    """수집 실행 기록을 저장한다. 이유별 건수는 JSONB로 남긴다."""
+    cur.execute(
+        """
+        INSERT INTO market_data_collection_runs (
+            run_id, data_source, ticker, from_date, to_date, collected_at,
+            raw_hash, returned_rows, inserted_rows, updated_rows,
+            excluded_rows, status, failure_reason, excluded_reasons
+        ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+        """,
+        (
+            run["run_id"], DATA_SOURCE, run["ticker"], run["from_date"], run["to_date"],
+            run["collected_at"], run["raw_hash"], run["returned_rows"], run["inserted_rows"],
+            run["updated_rows"], run["excluded_rows"], run["status"], run["failure_reason"],
+            Json(run["excluded_reasons"]),
+        ),
+    )
+
 
 def store_collection(ticker, from_date, to_date, df, valid_rows, excluded_rows):
     """유효 행을 upsert하고 실행 기록을 남긴다. 하나의 트랜잭션으로 처리한다."""
@@ -223,42 +253,59 @@ def store_collection(ticker, from_date, to_date, df, valid_rows, excluded_rows):
                         updated += 1
 
                 run_status, failure_reason = _decide_status(returned, len(valid_rows), len(excluded_rows))
-                cur.execute(
-                    """
-                    INSERT INTO market_data_collection_runs (
-                        run_id, data_source, ticker, from_date, to_date, collected_at,
-                        raw_hash, returned_rows, inserted_rows, updated_rows,
-                        excluded_rows, status, failure_reason
-                    ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
-                    """,
-                    (
-                        run_id, DATA_SOURCE, ticker, from_date, to_date, collected_at,
-                        raw_hash, returned, inserted, updated, len(excluded_rows),
-                        run_status, failure_reason,
-                    ),
-                )
+                run = {
+                    "run_id": run_id,
+                    "ticker": ticker,
+                    "from_date": from_date,
+                    "to_date": to_date,
+                    "data_source": DATA_SOURCE,
+                    "adjusted": ADJUSTED,
+                    "collected_at": collected_at,
+                    "raw_hash": raw_hash,
+                    "returned_rows": returned,
+                    "inserted_rows": inserted,
+                    "updated_rows": updated,
+                    "excluded_rows": len(excluded_rows),
+                    "status": run_status,
+                    "failure_reason": failure_reason,
+                    "excluded_reasons": summarize_excluded(excluded_rows),
+                }
+                _insert_run(cur, run)
     except psycopg.Error:
         # 연결 문자열이 섞이지 않도록 원본 예외를 응답에 노출하지 않는다.
         logger.warning("시장 데이터 저장 실패")
         raise HTTPException(status_code=500, detail="시장 데이터 저장 중 오류가 발생했습니다.")
 
-    return {
-        "run_id": run_id,
+    # 응답에는 이유별 건수와 행별 사유를 함께 반환해 검증 결과를 숨기지 않는다.
+    return {**run, "excluded": excluded_rows}
+
+
+def record_failed_fetch(ticker, from_date, to_date) -> str | None:
+    """외부 조회 실패도 DB가 정상이면 실패 실행으로 남긴다. 안전한 사유만 저장한다."""
+    run = {
+        "run_id": uuid.uuid4().hex,
         "ticker": ticker,
         "from_date": from_date,
         "to_date": to_date,
-        "data_source": DATA_SOURCE,
-        "adjusted": ADJUSTED,
-        "collected_at": collected_at,
-        "raw_hash": raw_hash,
-        "returned_rows": returned,
-        "inserted_rows": inserted,
-        "updated_rows": updated,
-        "excluded_rows": len(excluded_rows),
-        "status": run_status,
-        "failure_reason": failure_reason,
-        "excluded": excluded_rows,
+        "collected_at": datetime.now(timezone.utc),
+        "raw_hash": "",
+        "returned_rows": 0,
+        "inserted_rows": 0,
+        "updated_rows": 0,
+        "excluded_rows": 0,
+        "status": "failed",
+        "failure_reason": "external_fetch_failed",
+        "excluded_reasons": {},
     }
+    try:
+        with _connect() as conn:
+            with conn.cursor() as cur:
+                _insert_run(cur, run)
+        return run["run_id"]
+    except psycopg.Error:
+        # DB도 접속 불가면 원 실패(502)를 가리지 않도록 조용히 넘어간다.
+        logger.warning("실패 실행 기록 저장 실패")
+        return None
 
 
 def query_daily_prices(ticker, from_date, to_date) -> list[dict]:
@@ -291,8 +338,9 @@ def collect_daily_prices(ticker, from_date, to_date) -> dict:
     except HTTPException:
         raise
     except Exception:
-        # 외부 조회 실패. 안전한 사유만 기록하고 상세 예외는 노출하지 않는다.
+        # 외부 조회 실패. 안전한 사유만 실패 실행으로 남기고 상세 예외는 노출하지 않는다.
         logger.warning("pykrx 조회 실패")
+        record_failed_fetch(ticker, from_date, to_date)
         raise HTTPException(status_code=502, detail="시장 데이터 제공처 조회에 실패했습니다.")
 
     valid_rows, excluded_rows = validate_and_transform(df, ticker, from_date, to_date)
