@@ -95,6 +95,27 @@ def test_validate_and_transform_splits_valid_and_excluded():
     assert reasons == {"duplicate_date", "non_positive_price", "invalid_ohlc", "negative_volume", "out_of_range"}
 
 
+def test_duplicate_date_recorded_even_when_first_row_invalid():
+    # 경계 사례: 같은 거래일의 첫 행이 0가격(제외)이고 두 번째 행이 정상이어도
+    # 두 번째 행은 duplicate_date로 남아야 한다(원본 중복을 숨기지 않는다).
+    df = pd.DataFrame(
+        {
+            "시가": [0, 100],
+            "고가": [110, 110],
+            "저가": [90, 90],
+            "종가": [105, 105],
+            "거래량": [1000, 1000],
+        },
+        index=pd.to_datetime(["2024-01-02", "2024-01-02"]),
+    )
+    valid, excluded = market_data.validate_and_transform(df, "005930", date(2024, 1, 1), date(2024, 1, 5))
+
+    assert valid == []
+    reasons = sorted(e["reason"] for e in excluded)
+    assert reasons == ["duplicate_date", "non_positive_price"]
+    assert market_data.summarize_excluded(excluded) == {"non_positive_price": 1, "duplicate_date": 1}
+
+
 def test_non_trading_empty_is_not_error():
     empty = pd.DataFrame({"시가": [], "고가": [], "저가": [], "종가": [], "거래량": []}, index=pd.to_datetime([]))
     valid, excluded = market_data.validate_and_transform(empty, "005930", date(2024, 1, 1), date(2024, 1, 5))

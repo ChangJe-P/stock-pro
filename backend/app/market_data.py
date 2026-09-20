@@ -132,6 +132,14 @@ def validate_and_transform(df, ticker: str, from_date: date, to_date: date):
 
     for idx, row in df.iterrows():
         trade_date = idx.date() if hasattr(idx, "date") else idx
+
+        # 중복 거래일은 행 품질과 무관하게 먼저 추적한다. 첫 행이 잘못된 값으로
+        # 제외되더라도 같은 날짜의 이후 행은 duplicate_date로 남긴다(원본 중복 미은닉).
+        if trade_date in seen_dates:
+            excluded.append({"trade_date": str(trade_date), "reason": "duplicate_date"})
+            continue
+        seen_dates.add(trade_date)
+
         reason = None
         try:
             open_p = int(row[_COLUMN_OPEN])
@@ -143,9 +151,7 @@ def validate_and_transform(df, ticker: str, from_date: date, to_date: date):
             excluded.append({"trade_date": str(trade_date), "reason": "malformed_row"})
             continue
 
-        if trade_date in seen_dates:
-            reason = "duplicate_date"
-        elif not (from_date <= trade_date <= to_date):
+        if not (from_date <= trade_date <= to_date):
             reason = "out_of_range"
         elif min(open_p, high_p, low_p, close_p) <= 0:
             reason = "non_positive_price"
@@ -158,7 +164,6 @@ def validate_and_transform(df, ticker: str, from_date: date, to_date: date):
             excluded.append({"trade_date": str(trade_date), "reason": reason})
             continue
 
-        seen_dates.add(trade_date)
         valid.append(
             {
                 "ticker": ticker,
