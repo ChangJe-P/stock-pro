@@ -44,9 +44,9 @@ status: complete
 |---|---|---|
 | 1. pykrx일 때만 수집, 그 외 외부 요청 없이 안전 실패 | `_require_configured` → 503, `test_collect_blocked_when_not_pykrx`(fetch 미호출 단언) | 충족 |
 | 2. 한 종목·기간 일봉을 pykrx에서 가져와 daily_prices 저장 | `collect_daily_prices`→`store_collection`; 실제 DB 통합 확인(run1 inserted 2) | 충족(적재 경로 실DB 확인, 단 아래 실데이터 항목 참조) |
-| 3. 실행별 출처·기준시각·해시·반환/제외 행수·상태 기록 | `market_data_collection_runs` INSERT(이유별 `excluded_reasons` 포함) + 외부 실패도 `status=failed`로 기록; `test_collect_records_excluded_reasons`, `test_external_failure_records_failed_run` | 충족(리뷰 대응) |
+| 3. 실행별 출처·기준시각·해시·반환/제외 행수·상태 기록 | `market_data_collection_runs` INSERT(이유별 `excluded_reasons` 포함) + 외부 실패도 `status=failed`로 기록; mock 테스트 2건 + 실DB 재검증(partial·failed 실행 저장 확인) | 충족(리뷰 대응, 실DB 확인) |
 | 4. (종목,거래일) 중복 없이 재수집 시 갱신 | UNIQUE 제약 + `ON CONFLICT DO UPDATE`; 초기 세션 실DB 통합 확인 run2 inserted 0/updated 2, 중복 0건, close 105→107 (upsert SQL은 이번 수정에서 변경 없음) | 충족(실DB 확인) |
-| 5. 입력·기간·중복·누락·OHLC·0/음수 검증, 결과 미은닉 | `validate_and_transform`(사유별 제외), 응답·실행기록 모두에 제외 건수·이유별 건수; `test_validate_and_transform_splits_valid_and_excluded`, `test_collect_records_excluded_reasons` | 충족(리뷰 대응) |
+| 5. 입력·기간·중복·누락·OHLC·0/음수 검증, 결과 미은닉 | `validate_and_transform`(사유별 제외), 응답·실행기록 모두에 제외 건수·이유별 건수; mock 테스트 + 실DB에서 `excluded_reasons` 저장 확인 | 충족(리뷰 대응, 실DB 확인) |
 | 6. GET 오름차순 조회, 외부 수집 미시작 | `query_daily_prices` ORDER BY trade_date ASC; `test_get_returns_ascending_and_does_not_trigger_fetch`(오름차순 단언) | 충족(리뷰 대응) |
 | 7. 실주문·계좌·KIS·실시간·스케줄러·frontend 미추가 | 신규 코드는 backend 수집/조회에 한정, frontend 무변경 | 충족 |
 | 8. 기존 /health 유지 | main.py health 그대로, TestClient로 동작 확인, `test_health_*` 통과 | 충족 |
@@ -75,7 +75,13 @@ status: complete
 | 조회 | 거래일 오름차순, `2024-01-02` 종가 105→107 갱신 확인 |
 | 무결성 | collection_runs=2, 중복 `(종목,거래일)`=0 |
 
-**리뷰 대응 세션(커밋 7e6e3c1) 재검증은 실행하지 못함**: 이번 세션에서 Docker Desktop이 기동되지 않아(약 5분 대기 후에도 daemon 미응답) `excluded_reasons` 컬럼 추가와 실패 실행 기록을 실제 Postgres로 재확인하지 못했다. 통과로 보고하지 않는다. 근거: (1) `daily_prices` upsert SQL은 이번 수정에서 변경하지 않았고, (2) 새 실행 기록 경로는 가짜 커넥션 mock 테스트로 INSERT 파라미터를 단언했다. Docker 가능한 환경에서 `POST /collect`(기간 밖 날짜 포함)로 `excluded_reasons` 저장과 실패 실행 기록을 실DB로 재확인 필요.
+**리뷰 대응 세션(커밋 7e6e3c1) 실DB 재검증 완료 (2026-09-20)**: Docker Postgres를 띄우고 `fetch_ohlcv`만 mock해 실제 적재·조회로 두 P1 수정을 확인했다(실제 KRX 네트워크 미사용).
+
+| 항목 | 결과 |
+|---|---|
+| P1-A 제외 사유 저장 | 기간 밖 날짜 + 0가격을 섞어 수집 → 실행 기록 `status=partial`, `excluded_rows=2`, `excluded_reasons={"out_of_range":1,"non_positive_price":1}` 저장 확인 |
+| P1-B 실패 실행 기록 | fetch 예외 발생 시 502 반환과 함께 실행 기록 `status=failed`, `failure_reason=external_fetch_failed` 저장 확인 |
+| 스키마 | `market_data_collection_runs.excluded_reasons` 컬럼 타입 `jsonb` 확인(다중문 DDL + ADD COLUMN IF NOT EXISTS 정상 동작) |
 
 ### 실제 pykrx 네트워크 조회 (수동, 미검증으로 보고)
 
@@ -92,13 +98,12 @@ status: complete
 - 실제 KRX/Naver 응답을 받지 못하는 환경이라, 실데이터 기준의 컬럼명(`시가/고가/저가/종가/거래량`)·타입 매핑은 pykrx 문서·통상 스키마에 근거한 가정이다. 실데이터가 되는 환경에서 재검증이 필요하다.
 - 가격은 KRW 정수라는 전제로 `int()` 캐스팅한다(비조정 원가격).
 - 원본 해시는 `df.sort_index().to_csv()`의 SHA-256으로, 같은 입력에 대해 결정적이다. 원본 응답 전문은 저장·로그하지 않는다.
-- 스키마는 마이그레이션 프레임워크 없이 각 DB 작업 시 `CREATE TABLE IF NOT EXISTS` + `ALTER TABLE ... ADD COLUMN IF NOT EXISTS`로 재실행 안전하게 초기화한다. 다중문 DDL은 초기 세션에서 실Postgres로 동작을 확인했고, `excluded_reasons` 컬럼 추가문은 이번 세션에서 실DB로 재확인하지 못했다(Docker 미기동).
+- 스키마는 마이그레이션 프레임워크 없이 각 DB 작업 시 `CREATE TABLE IF NOT EXISTS` + `ALTER TABLE ... ADD COLUMN IF NOT EXISTS`로 재실행 안전하게 초기화한다. `excluded_reasons` 컬럼 추가를 포함한 다중문 DDL을 실Postgres로 재확인했다(컬럼 타입 jsonb).
 - 설정 오류(503)·외부 실패(502)·저장 오류(500) 메시지에 환경변수 값·비밀값·연결 문자열을 넣지 않는다. `MARKET_DATA_BASE_URL/API_KEY/API_SECRET/REQUESTS_PER_MINUTE`는 수집 로직에서 읽지 않는다.
 - Starlette 1.6.0에서는 `app.routes` 열거가 포함 라우터를 그대로 보여주지 않으나, 실제 라우팅은 정상이다(TestClient·pytest로 확인).
 
 ## 미해결 항목과 다음 제안
 
 - 실제 pykrx 데이터 수집·저장 재검증: KRX/Naver 접근이 가능한 환경에서 `POST /collect`로 실종목 실기간을 수집해 완료 기준 2를 실데이터로 확정 필요.
-- 리뷰 대응 실DB 재확인(Docker 가능 환경): `excluded_reasons` 저장과 외부 실패 시 `status=failed` 실행 기록을 실제 Postgres로 재확인 필요. 이번 세션은 Docker 미기동으로 미실행.
 - Docker backend 이미지에는 pandas/numpy 등 빌드가 포함된다. 이미지 크기·빌드 시간 점검은 후속 검토 대상.
 - main/dev로의 병합·push는 규칙에 따라 하지 않았다. Codex 검증 후 진행.
