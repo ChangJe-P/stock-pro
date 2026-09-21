@@ -111,6 +111,50 @@ curl http://localhost:8000/virtual-account/cash-ledger
 
 원장 행을 생성 시각 오름차순으로 반환합니다(수정·삭제 경로 없음). 계좌가 없으면 404입니다.
 
+## 가상 매수 주문·다음 거래일 시가 체결 API (T-004)
+
+학습용 **매수 주문**을 기록하고, 주문을 결정한 거래일보다 **엄격히 뒤인** 첫 저장 일봉 시가로 수동 체결하는 backend 전용 API입니다. **실제 투자가 아니며** 실제 계좌·주문·자동매매와 무관합니다.
+
+- **매수 전용**: 이 단계는 `buy`만 지원합니다. 매도·취소·수정·수량 변경·포지션·손익은 포함하지 않습니다.
+- **다음 거래일 시가 원칙**: 체결은 `daily_prices`에서 `trade_date > decision_trade_date`인 **가장 이른** 비조정 일봉의 `open_price`만 사용합니다. 같은 날 가격·종가는 쓰지 않아 미래 데이터 누수를 막습니다. 가격 조회·체결은 pykrx·외부 수집을 호출하지 않고 **저장된 데이터만** 읽습니다.
+- **대기 주문은 현금을 예약하지 않음**: 주문 생성은 현금을 차감하지 않습니다. 체결 시점의 원장 합계 현금을 기준으로 판단합니다.
+- **비용 가정**: 슬리피지·수수료는 T-003 계좌의 정책 스냅샷(v1)에서 읽어 정수·명시적 올림으로 적용합니다.
+  - `execution_price_krw = ceil(open_price × (10000 + slippage_bps) / 10000)`
+  - `gross = execution_price × quantity`, `fee = ceil(gross × buy_fee_rate)`, `cash_delta = -(gross + fee)`
+
+### 1) 주문 생성 — `POST /virtual-orders`
+
+먼저 대상 종목·결정 거래일의 일봉이 저장돼 있어야 합니다(없으면 외부 수집 없이 409). 계좌가 없으면 404, 형식 오류는 422입니다.
+
+```bash
+curl -X POST http://localhost:8000/virtual-orders \
+  -H "Content-Type: application/json" \
+  -d '{"ticker":"005930","quantity":3,"decision_trade_date":"2024-01-02"}'
+```
+
+성공 시 `pending` 주문을 만들고 현금 원장은 추가하지 않습니다.
+
+### 2) 수동 체결 — `POST /virtual-orders/{order_id}/execute`
+
+지정한 `pending` 주문 한 건만 체결을 시도합니다.
+
+```bash
+curl -X POST http://localhost:8000/virtual-orders/1/execute
+```
+
+- 다음 거래일 시가가 아직 없으면 주문을 바꾸지 않고 `409`(pending 유지)입니다.
+- 가격이 있고 현금이 충분하면 `filled`와 음수 `buy_execution` 현금 원장 한 행을 원자적으로 기록합니다.
+- 현금이 부족하면 `rejected_insufficient_cash`로 종료하며 원장을 만들지 않습니다.
+- 이미 종료된 주문(`filled`/`rejected_insufficient_cash`)을 다시 체결하면 기존 결과만 반환합니다.
+
+### 3) 주문 조회 — `GET /virtual-orders`
+
+```bash
+curl http://localhost:8000/virtual-orders
+```
+
+주문을 `created_at`·`id` 오름차순으로 반환하며 외부 수집·체결·상태 변경을 시작하지 않습니다.
+
 ## 테스트·검증
 
 ### backend (pytest)

@@ -334,6 +334,37 @@ def query_daily_prices(ticker, from_date, to_date) -> list[dict]:
         raise HTTPException(status_code=500, detail="시장 데이터 조회 중 오류가 발생했습니다.")
 
 
+# --- 저장 가격 조회(커서 기반, 외부 수집 없음) --------------------------------
+# 아래 두 함수는 daily_prices만 읽는다. pykrx·HTTP·collect_daily_prices를 호출하지 않으며,
+# 호출자의 트랜잭션(커서)에서 실행되도록 커서를 인자로 받는다. 비조정(adjusted=false) 행만 본다.
+
+def stored_unadjusted_price_exists(cur, ticker: str, trade_date) -> bool:
+    """해당 종목·거래일에 저장된 비조정 일봉이 있는지 확인한다."""
+    cur.execute(
+        "SELECT 1 FROM daily_prices WHERE ticker = %s AND trade_date = %s AND adjusted = false LIMIT 1",
+        (ticker, trade_date),
+    )
+    return cur.fetchone() is not None
+
+
+def earliest_unadjusted_open_after(cur, ticker: str, decision_trade_date) -> dict | None:
+    """결정 거래일보다 엄격히 뒤인 가장 이른 비조정 일봉을 반환한다(없으면 None).
+
+    같은 날·종가는 쓰지 않는다. 반환에 시가·거래일·출처·비조정 여부·수집 실행 식별자를 담는다.
+    """
+    cur.execute(
+        """
+        SELECT trade_date, open_price, data_source, adjusted, collection_run_id
+        FROM daily_prices
+        WHERE ticker = %s AND trade_date > %s AND adjusted = false
+        ORDER BY trade_date ASC
+        LIMIT 1
+        """,
+        (ticker, decision_trade_date),
+    )
+    return cur.fetchone()
+
+
 # --- 오케스트레이션 ----------------------------------------------------------
 
 def collect_daily_prices(ticker, from_date, to_date) -> dict:
