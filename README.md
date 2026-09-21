@@ -22,7 +22,7 @@
    ```
 
 3. `.env`의 `POSTGRES_PASSWORD`를 로컬 개발용 비밀번호로 바꿉니다. `.env`는 Git에 커밋하지 않습니다.
-4. 시장 데이터·Notion 변수는 제공처가 정해지기 전까지 빈 값으로 둡니다. 이 값들이 비어 있어도 개발 환경은 정상 기동됩니다.
+4. 시장 데이터 수집은 `MARKET_DATA_PROVIDER=pykrx`일 때만 동작합니다(`.env.example` 기본값). pykrx는 키·주소가 필요 없으므로 나머지 `MARKET_DATA_`·`NOTION_` 변수는 빈 값으로 둡니다. 이 값들이 비어 있어도 개발 환경은 정상 기동됩니다.
 
 ## 실행
 
@@ -49,6 +49,35 @@ DB 데이터(영속 볼륨)까지 삭제하려면:
 ```bash
 docker compose down -v
 ```
+
+## 시장 데이터 수집 API (T-002)
+
+국내 주식 **일봉 OHLCV**를 `pykrx` 공개 조회로 한 종목·기간씩 수집해 PostgreSQL에 저장하고 조회하는 backend 전용 API입니다. 이후 가상 주문의 다음 거래일 시가 체결·수익률 계산의 입력값으로 쓰입니다.
+
+- **목적/한계**: 학습용 참고 데이터입니다. **투자 조언이나 수익 보장을 제공하지 않습니다.** 수집 가격은 수집 시점의 **비조정(adjusted=False)** 값이며, 배당·액면분할 등 기업행동은 반영하지 않습니다. 전 종목 일괄 수집·스케줄러·실시간 시세는 제공하지 않습니다.
+- **실행 전 설정**: `MARKET_DATA_PROVIDER=pykrx`가 필요합니다. 비어 있거나 다른 값이면 수집은 외부 요청 없이 `503` 설정 오류로 끝납니다.
+
+### 수집 — `POST /market-data/daily-prices/collect`
+
+본문(JSON)으로 한 종목·기간을 수집·저장합니다. GET 조회는 외부 수집을 시작하지 않습니다.
+
+```bash
+curl -X POST http://localhost:8000/market-data/daily-prices/collect \
+  -H "Content-Type: application/json" \
+  -d '{"ticker":"005930","from_date":"2024-01-02","to_date":"2024-01-05"}'
+```
+
+- `ticker`: 숫자 6자리, 날짜: ISO `YYYY-MM-DD`, `from_date <= to_date` (위반 시 `422`).
+- 응답: 종목·요청 기간·출처·비조정 여부·수집 기준 시각·원본 SHA-256 해시·반환/삽입/갱신/제외 행 수·상태와 제외 사유.
+- 같은 `(종목, 거래일)` 재수집 시 중복 없이 기존 행을 갱신합니다. 0/음수 가격·잘못된 OHLC 관계·기간 밖 날짜·중복 거래일은 제외하고 그 사유·건수를 실행 기록에 남깁니다.
+
+### 조회 — `GET /market-data/daily-prices`
+
+```bash
+curl "http://localhost:8000/market-data/daily-prices?ticker=005930&from_date=2024-01-02&to_date=2024-01-05"
+```
+
+저장된 데이터를 거래일 오름차순으로 반환하며 외부 수집을 하지 않습니다.
 
 ## 테스트·검증
 

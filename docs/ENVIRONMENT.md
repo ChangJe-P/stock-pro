@@ -26,15 +26,26 @@
 
 Claude Code는 Docker Compose와 backend 설정에서 위 값을 사용한다. 포트·호스트·DB 자격 증명을 코드나 Compose 파일에 직접 적지 않는다.
 
+## 시장 데이터 변수 (T-002, pykrx)
+
+T-002에서 승인된 유일한 데이터 제공처는 Python 패키지 `pykrx`다. pykrx는 API 키·주소·요청 제한이 필요 없다.
+
+| 변수 | 용도 | 로컬 값 |
+|---|---|---|
+| MARKET_DATA_PROVIDER | 수집 제공처 선택 | `pykrx` |
+| MARKET_DATA_BASE_URL | pykrx에는 필요 없음 | 비어 있음 |
+| MARKET_DATA_API_KEY | pykrx에는 필요 없음 | 비어 있음 |
+| MARKET_DATA_API_SECRET | pykrx에는 필요 없음 | 비어 있음 |
+| MARKET_DATA_REQUESTS_PER_MINUTE | pykrx에는 필요 없음 | 비어 있음 |
+
+- `MARKET_DATA_PROVIDER=pykrx`일 때만 수집을 허용한다. 값이 비어 있거나 다른 값이면 외부 요청을 보내지 않고 비밀값을 포함하지 않는 설정 오류로 끝낸다.
+- backend는 T-002 수집에서 `MARKET_DATA_BASE_URL`·`MARKET_DATA_API_KEY`·`MARKET_DATA_API_SECRET`·`MARKET_DATA_REQUESTS_PER_MINUTE`를 읽지 않으며 로그에도 남기지 않는다.
+- pykrx 외 다른 제공처(KIS 등)를 위한 인터페이스·팩토리는 만들지 않는다.
+
 ## 아직 값이 없는 외부 연동 변수
 
 | 변수 | 언제 설정하는가 | 현재 상태 |
 |---|---|---|
-| MARKET_DATA_PROVIDER | 공식 데이터 제공처와 이용 조건이 확정된 뒤 | 비어 있음 |
-| MARKET_DATA_BASE_URL | 승인된 제공처의 API 주소를 설정할 때 | 비어 있음 |
-| MARKET_DATA_API_KEY | 위 제공처의 인증키를 발급받은 뒤 | 비어 있음 |
-| MARKET_DATA_API_SECRET | 제공처가 별도 비밀값을 요구할 때 | 비어 있음 |
-| MARKET_DATA_REQUESTS_PER_MINUTE | 제공처 이용 조건의 요청 제한을 설정할 때 | 비어 있음 |
 | NOTION_INTEGRATION_TOKEN | Notion 내보내기 기능을 구현할 때 | 비어 있음 |
 | NOTION_ 접두어 데이터 소스 ID | 주몽 운영실 데이터베이스를 만든 뒤 | 비어 있음 |
 
@@ -43,8 +54,8 @@ MVP에는 증권사 계좌·주문 API 변수를 추가하지 않는다. 실제 
 ## 지금 입력할 값
 
 - `POSTGRES_PASSWORD`만 지금 정한다. 로컬 개발 DB 전용 비밀번호이며, `.env`에만 입력한다.
-- 시장 데이터 제공처를 아직 선택하지 않았다면 `MARKET_DATA_` 변수는 빈 값으로 둔다. 추측한 제공처명·주소·키를 넣지 않는다.
-- 제공처를 선택한 뒤에는 제공처 코드, 공식 API 주소, 인증키, 별도 비밀값 유무, 요청 제한을 `.env`에 입력한다. 인증키와 비밀값은 서로 다를 수 있다.
+- T-002에서는 `MARKET_DATA_PROVIDER=pykrx`로 둔다. pykrx는 키·주소·요청 제한이 필요 없으므로 나머지 `MARKET_DATA_` 변수는 빈 값으로 둔다.
+- 향후 다른 제공처를 승인하면(별도 작업 문서 필요) 제공처 코드, 공식 API 주소, 인증키, 별도 비밀값 유무, 요청 제한을 `.env`에 입력한다.
 - Notion을 바로 연동하지 않으면 `NOTION_` 변수도 빈 값으로 둔다. 연동할 때는 Internal connection의 설치 액세스 토큰과 주몽 운영실의 각 데이터 소스 ID를 입력한다.
 
 ## 구현 시 처리
