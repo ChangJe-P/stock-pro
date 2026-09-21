@@ -79,6 +79,38 @@ curl "http://localhost:8000/market-data/daily-prices?ticker=005930&from_date=202
 
 저장된 데이터를 거래일 오름차순으로 반환하며 외부 수집을 하지 않습니다.
 
+## 가상계좌·현금 원장 API (T-003)
+
+단일 로컬 사용자의 **가상 학습 계좌**와 추가 전용(append-only) 현금 원장을 만드는 backend 전용 API입니다. 모든 금액은 KRW 정수이며, 현재 현금은 원장 금액의 합으로 계산합니다.
+
+- **가상 현금 경계**: 최초 현금·수수료·세금·슬리피지는 **실제 돈·실제 증권사 값이 아닌** 학습용 시뮬레이션 정책(v1) 가정입니다. 실제 계좌·계좌번호·로그인·주문·체결·손익 계산은 포함하지 않습니다. 투자 조언이 아닙니다.
+- **정책 스냅샷**: 값은 `VIRTUAL_*` 환경변수(설정 계층)에서만 읽어 계좌 최초 생성 시 스냅샷으로 저장합니다. 이후 값을 바꿔도 **기존 계좌에는 소급 적용되지 않습니다.** 설정 누락·형식·범위 오류는 값 노출 없이 안전하게 실패합니다.
+- **v1 가정과 제한**: 시작 현금 10,000,000 KRW, 매수·매도 수수료율 0.015%, 매도 세금율 0%, 슬리피지 0 bps. 자세한 규칙은 docs/ENVIRONMENT.md 참조.
+
+### 초기화 — `POST /virtual-account/initialize`
+
+계좌가 없으면 설정 스냅샷으로 계좌 한 개와 `opening_balance` 원장 한 개를 원자적으로 생성합니다. 이미 있으면 **재설정·행 추가 없이** 기존 계좌를 반환합니다.
+
+```bash
+curl -X POST http://localhost:8000/virtual-account/initialize
+```
+
+### 계좌 조회 — `GET /virtual-account`
+
+```bash
+curl http://localhost:8000/virtual-account
+```
+
+계좌 식별자·생성 시각·정책 버전·정책 스냅샷·최초 현금·원장 합계로 계산한 `available_cash_krw`를 반환합니다. 계좌가 없으면 404입니다.
+
+### 현금 원장 조회 — `GET /virtual-account/cash-ledger`
+
+```bash
+curl http://localhost:8000/virtual-account/cash-ledger
+```
+
+원장 행을 생성 시각 오름차순으로 반환합니다(수정·삭제 경로 없음). 계좌가 없으면 404입니다.
+
 ## 테스트·검증
 
 ### backend (pytest)

@@ -6,6 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from .config import get_settings
 from .db import check_database
 from .market_data import router as market_data_router
+from .virtual_account import router as virtual_account_router
 
 settings = get_settings()
 
@@ -20,6 +21,7 @@ if settings.cors_origins:
     )
 
 app.include_router(market_data_router)
+app.include_router(virtual_account_router)
 
 
 @app.get("/health")
