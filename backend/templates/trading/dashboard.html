@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>주몽 — 가상 학습 대시보드</title>
+</head>
+<body>
+  <header>
+    <h1>주몽 (Jumong)</h1>
+    <p><strong>{{ disclaimer }}</strong></p>
+    <p>이 화면은 읽기 전용입니다. 데이터 수집·계좌 초기화·주문 체결을 시작하지 않습니다.</p>
+  </header>
+
+  <main>
+    {% if db_error %}
+      <section>
+        <h2>상태</h2>
+        <p>데이터베이스에 아직 연결할 수 없습니다. 서비스와 DB가 준비되면 계좌 요약이 표시됩니다.</p>
+      </section>
+    {% elif account %}
+      <section>
+        <h2>가상계좌 요약</h2>
+        <table>
+          <caption>단일 로컬 가상 학습 계좌</caption>
+          <tbody>
+            <tr><th scope="row">계좌 식별자</th><td>{{ account.id }}</td></tr>
+            <tr><th scope="row">정책 버전</th><td>{{ account.policy_version }}</td></tr>
+            <tr><th scope="row">최초 가상 현금(KRW)</th><td>{{ account.initial_cash_krw }}</td></tr>
+            <tr><th scope="row">현재 가용 현금(KRW)</th><td>{{ available_cash_krw }}</td></tr>
+            <tr><th scope="row">매수 수수료율</th><td>{{ account.buy_fee_rate }}</td></tr>
+            <tr><th scope="row">매도 수수료율</th><td>{{ account.sell_fee_rate }}</td></tr>
+            <tr><th scope="row">매도 세금율</th><td>{{ account.sell_tax_rate }}</td></tr>
+            <tr><th scope="row">슬리피지(bps)</th><td>{{ account.slippage_bps }}</td></tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section>
+        <h2>최근 매수 주문</h2>
+        {% if recent_orders %}
+          <table>
+            <caption>최근 주문(최신순, 최대 20건)</caption>
+            <thead>
+              <tr>
+                <th scope="col">주문</th><th scope="col">종목</th><th scope="col">수량</th>
+                <th scope="col">결정 거래일</th><th scope="col">상태</th>
+                <th scope="col">체결 거래일</th><th scope="col">체결가(KRW)</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for o in recent_orders %}
+                <tr>
+                  <td>{{ o.id }}</td>
+                  <td>{{ o.ticker }}</td>
+                  <td>{{ o.quantity }}</td>
+                  <td>{{ o.decision_trade_date|date:"Y-m-d" }}</td>
+                  <td>{{ o.status }}</td>
+                  <td>{% if o.execution_trade_date %}{{ o.execution_trade_date|date:"Y-m-d" }}{% else %}-{% endif %}</td>
+                  <td>{% if o.execution_price_krw %}{{ o.execution_price_krw }}{% else %}-{% endif %}</td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        {% else %}
+          <p>아직 주문이 없습니다.</p>
+        {% endif %}
+      </section>
+    {% else %}
+      <section>
+        <h2>가상계좌 요약</h2>
+        <p>아직 가상 학습 계좌가 없습니다. JSON API로 계좌를 초기화하면 요약이 표시됩니다.</p>
+      </section>
+    {% endif %}
+  </main>
+</body>
+</html>
