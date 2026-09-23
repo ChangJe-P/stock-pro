@@ -239,6 +239,22 @@ class OrderTests(TestCase):
         self.assertEqual(self.client.get("/virtual-account").json()["available_cash_krw"], 1000000)
 
 
+class JsonBodyContractTests(TestCase):
+    """공통 JSON 파서는 문법상 유효해도 객체(dict)가 아니면 500이 아닌 안전한 422 JSON을 낸다."""
+
+    def test_collect_rejects_json_array_body(self):
+        res = self.client.post(
+            "/market-data/daily-prices/collect", data="[]", content_type="application/json"
+        )
+        self.assertEqual(res.status_code, 422)
+        self.assertIn("detail", res.json())
+
+    def test_orders_rejects_json_array_body(self):
+        res = self.client.post("/virtual-orders", data="[]", content_type="application/json")
+        self.assertEqual(res.status_code, 422)
+        self.assertIn("detail", res.json())
+
+
 class DashboardTests(TestCase):
     def test_dashboard_read_only_renders(self):
         res = self.client.get("/")

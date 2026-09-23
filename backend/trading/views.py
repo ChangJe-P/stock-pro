@@ -36,9 +36,14 @@ def _error(exc: ApiError):
 
 def _parse_json_body(request) -> dict:
     try:
-        return json.loads(request.body or b"{}")
+        parsed = json.loads(request.body or b"{}")
     except (ValueError, TypeError):
         raise ApiError(422, "요청 본문이 올바른 JSON이 아닙니다.")
+    # 문법상 유효해도 객체(dict)가 아니면(예: 배열·문자열) 안전한 422로 거절한다.
+    # 그러지 않으면 호출부의 body.get(...)에서 예외가 나 500이 된다.
+    if not isinstance(parsed, dict):
+        raise ApiError(422, "요청 본문은 JSON 객체여야 합니다.")
+    return parsed
 
 
 def _require_ticker(value) -> str:
