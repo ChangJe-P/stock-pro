@@ -24,12 +24,14 @@
 
 | 영역 | 선택 |
 |---|---|
-| Frontend | Next.js와 TypeScript |
-| Backend | FastAPI와 Python |
+| 웹 애플리케이션 | Django와 Django Template (단일 서비스, 화면·JSON API 같은 origin) |
+| 언어 | Python |
 | 데이터베이스 | PostgreSQL |
-| 실행 환경 | Docker Compose |
+| 실행 환경 | Docker Compose (`db`, `web`) |
 | DB 확인 도구 | DBeaver |
 | 배포 | 로컬 기반 MVP 안정화 후 AWS 검토 |
+
+> T-005에서 기존 FastAPI backend와 Next.js frontend를 Django + Django Template 단일 서비스로 전환했다. JSON API 경로·상태 코드·응답 의미와 PostgreSQL 데이터는 그대로 유지한다.
 
 ## 시장 데이터와 손익의 원칙
 

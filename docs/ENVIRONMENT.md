@@ -10,21 +10,24 @@
 - 로그와 오류 메시지에 키·토큰·비밀번호·전체 연결 문자열을 출력하지 않는다.
 - 설정 파일이나 코드에 설명이 필요하면 주석은 한국어로 작성한다. 단, 비밀값이나 전체 연결 문자열을 주석에 적지 않는다.
 
-## T-001에서 필요한 값
+## 애플리케이션·DB 설정 값
 
 | 변수 | 용도 | 로컬 기본값 |
 |---|---|---|
-| APP_ENV | 실행 환경 구분 | development |
-| FRONTEND_PORT | frontend 공개 포트 | 3000 |
-| BACKEND_PORT | backend 공개 포트 | 8000 |
-| CORS_ALLOWED_ORIGINS | 개발 frontend 주소 | http://localhost:3000 |
+| APP_ENV | 실행 환경 구분(development면 Django DEBUG on) | development |
+| FRONTEND_PORT | 브라우저 공개 포트(호스트) | 3000 |
+| BACKEND_PORT | 컨테이너 내부 Django 포트 | 8000 |
+| DJANGO_SECRET_KEY | Django 비밀 키(로컬 무작위 값, .env에만) | .env에서만 설정 |
+| DJANGO_ALLOWED_HOSTS | 허용 호스트(쉼표 구분) | localhost,127.0.0.1 |
 | POSTGRES_HOST | Compose 내부 DB 호스트 | db |
 | POSTGRES_PORT | DB 포트 | 5432 |
 | POSTGRES_DB | 로컬 개발 DB 이름 | jumong |
 | POSTGRES_USER | 로컬 개발 DB 사용자 | jumong_app |
 | POSTGRES_PASSWORD | 로컬 개발 DB 비밀번호 | .env에서만 설정 |
 
-Claude Code는 Docker Compose와 backend 설정에서 위 값을 사용한다. 포트·호스트·DB 자격 증명을 코드나 Compose 파일에 직접 적지 않는다.
+- T-005에서 단일 origin 구성으로 바뀌어 `CORS_ALLOWED_ORIGINS`는 제거했다. 화면과 JSON API는 같은 Django 서비스에서 제공된다.
+- 모든 설정값은 `jumong/settings.py`(설정 계층)에서만 환경변수로 읽는다. `DJANGO_SECRET_KEY`·DB 비밀번호·전체 연결 문자열은 코드·커밋·로그·오류 응답·문서에 넣지 않는다.
+- 포트·호스트·DB 자격 증명을 코드나 Compose 파일에 직접 적지 않는다.
 
 ## 시장 데이터 변수 (T-002, pykrx)
 

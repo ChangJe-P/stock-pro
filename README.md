@@ -4,13 +4,16 @@
 
 ## 구성
 
+Django + Django Template **단일 웹 서비스**입니다. 화면(읽기 전용 대시보드)과 JSON API가 같은 origin에서 제공됩니다.
+
 | 서비스 | 기술 | 컨테이너 내부 포트 | 호스트 노출 포트 |
 |---|---|---|---|
-| frontend | Next.js (TypeScript), node:22 | 3000 | `FRONTEND_PORT` (기본 3000) |
-| backend | FastAPI (Python), python:3.12 | 8000 | `BACKEND_PORT` (기본 8000) |
+| web | Django (Python), python:3.12 | `BACKEND_PORT` (기본 8000) | `FRONTEND_PORT` (기본 3000) |
 | db | PostgreSQL 16 | 5432 | `POSTGRES_PORT` (기본 5432) |
 
-포트·호스트·DB 자격 증명은 모두 `.env`에서 읽습니다. 코드나 Docker Compose 파일에 직접 적지 않습니다.
+- 화면과 API 기본 주소: `http://localhost:3000` (예: `http://localhost:3000/health`).
+- 포트·호스트·DB 자격 증명·비밀값은 모두 `.env`에서 읽습니다. 코드나 Docker Compose 파일에 직접 적지 않습니다.
+- 스키마는 Django migration만 관리합니다(요청 처리 중 DDL 실행 없음).
 
 ## 사전 준비
 
@@ -21,7 +24,7 @@
    cp .env.example .env
    ```
 
-3. `.env`의 `POSTGRES_PASSWORD`를 로컬 개발용 비밀번호로 바꿉니다. `.env`는 Git에 커밋하지 않습니다.
+3. `.env`의 `POSTGRES_PASSWORD`와 `DJANGO_SECRET_KEY`를 로컬 개발용 값으로 바꿉니다. `.env`는 Git에 커밋하지 않습니다.
 4. 시장 데이터 수집은 `MARKET_DATA_PROVIDER=pykrx`일 때만 동작합니다(`.env.example` 기본값). pykrx는 키·주소가 필요 없으므로 나머지 `MARKET_DATA_`·`NOTION_` 변수는 빈 값으로 둡니다. 이 값들이 비어 있어도 개발 환경은 정상 기동됩니다.
 
 ## 실행
@@ -32,11 +35,11 @@
 docker compose up -d --build
 ```
 
-- backend는 db가 healthcheck를 통과한 뒤에만 시작합니다.
-- backend 상태 확인: `http://localhost:${BACKEND_PORT}/health` (기본 http://localhost:8000/health)
+- `web`은 db가 healthcheck를 통과한 뒤에 시작하며, 기동 시 `python manage.py migrate`로 스키마를 적용/채택합니다.
+- 대시보드(읽기 전용): `http://localhost:${FRONTEND_PORT}` (기본 http://localhost:3000)
+- 상태 확인: `http://localhost:${FRONTEND_PORT}/health`
   - 정상: HTTP 200, `{"status":"ok","database":"connected", ...}`
   - DB 미준비: HTTP 503, `{"status":"unhealthy","database":"unavailable", ...}`
-- frontend 루트 화면: `http://localhost:${FRONTEND_PORT}` (기본 http://localhost:3000)
 
 ## 종료
 
@@ -62,7 +65,7 @@ docker compose down -v
 본문(JSON)으로 한 종목·기간을 수집·저장합니다. GET 조회는 외부 수집을 시작하지 않습니다.
 
 ```bash
-curl -X POST http://localhost:8000/market-data/daily-prices/collect \
+curl -X POST http://localhost:3000/market-data/daily-prices/collect \
   -H "Content-Type: application/json" \
   -d '{"ticker":"005930","from_date":"2024-01-02","to_date":"2024-01-05"}'
 ```
@@ -74,7 +77,7 @@ curl -X POST http://localhost:8000/market-data/daily-prices/collect \
 ### 조회 — `GET /market-data/daily-prices`
 
 ```bash
-curl "http://localhost:8000/market-data/daily-prices?ticker=005930&from_date=2024-01-02&to_date=2024-01-05"
+curl "http://localhost:3000/market-data/daily-prices?ticker=005930&from_date=2024-01-02&to_date=2024-01-05"
 ```
 
 저장된 데이터를 거래일 오름차순으로 반환하며 외부 수집을 하지 않습니다.
@@ -92,13 +95,13 @@ curl "http://localhost:8000/market-data/daily-prices?ticker=005930&from_date=202
 계좌가 없으면 설정 스냅샷으로 계좌 한 개와 `opening_balance` 원장 한 개를 원자적으로 생성합니다. 이미 있으면 **재설정·행 추가 없이** 기존 계좌를 반환합니다.
 
 ```bash
-curl -X POST http://localhost:8000/virtual-account/initialize
+curl -X POST http://localhost:3000/virtual-account/initialize
 ```
 
 ### 계좌 조회 — `GET /virtual-account`
 
 ```bash
-curl http://localhost:8000/virtual-account
+curl http://localhost:3000/virtual-account
 ```
 
 계좌 식별자·생성 시각·정책 버전·정책 스냅샷·최초 현금·원장 합계로 계산한 `available_cash_krw`를 반환합니다. 계좌가 없으면 404입니다.
@@ -106,7 +109,7 @@ curl http://localhost:8000/virtual-account
 ### 현금 원장 조회 — `GET /virtual-account/cash-ledger`
 
 ```bash
-curl http://localhost:8000/virtual-account/cash-ledger
+curl http://localhost:3000/virtual-account/cash-ledger
 ```
 
 원장 행을 생성 시각 오름차순으로 반환합니다(수정·삭제 경로 없음). 계좌가 없으면 404입니다.
@@ -127,7 +130,7 @@ curl http://localhost:8000/virtual-account/cash-ledger
 먼저 대상 종목·결정 거래일의 일봉이 저장돼 있어야 합니다(없으면 외부 수집 없이 409). 계좌가 없으면 404, 형식 오류는 422입니다.
 
 ```bash
-curl -X POST http://localhost:8000/virtual-orders \
+curl -X POST http://localhost:3000/virtual-orders \
   -H "Content-Type: application/json" \
   -d '{"ticker":"005930","quantity":3,"decision_trade_date":"2024-01-02"}'
 ```
@@ -139,7 +142,7 @@ curl -X POST http://localhost:8000/virtual-orders \
 지정한 `pending` 주문 한 건만 체결을 시도합니다.
 
 ```bash
-curl -X POST http://localhost:8000/virtual-orders/1/execute
+curl -X POST http://localhost:3000/virtual-orders/1/execute
 ```
 
 - 다음 거래일 시가가 아직 없으면 주문을 바꾸지 않고 `409`(pending 유지)입니다.
@@ -150,14 +153,14 @@ curl -X POST http://localhost:8000/virtual-orders/1/execute
 ### 3) 주문 조회 — `GET /virtual-orders`
 
 ```bash
-curl http://localhost:8000/virtual-orders
+curl http://localhost:3000/virtual-orders
 ```
 
 주문을 `created_at`·`id` 오름차순으로 반환하며 외부 수집·체결·상태 변경을 시작하지 않습니다.
 
 ## 테스트·검증
 
-### backend (pytest)
+Django 기본 test runner로 실행합니다. 외부 pykrx는 mock 처리되어 실제 네트워크 요청을 보내지 않습니다. 테스트는 Django 테스트 DB(실제 PostgreSQL)를 사용하므로 `db`가 떠 있어야 합니다.
 
 ```bash
 cd backend
@@ -165,19 +168,16 @@ python -m venv .venv
 # Windows PowerShell: .venv\Scripts\Activate.ps1
 # macOS/Linux:        source .venv/bin/activate
 pip install -r requirements.txt
-pytest
+# .env를 export하거나 POSTGRES_*/DJANGO_SECRET_KEY 등을 환경변수로 제공한 뒤:
+python manage.py test trading
 ```
 
-실제 설치된 backend 의존성 버전은 `backend/requirements.lock.txt`에 기록되어 있습니다.
+실제 설치된 의존성 버전은 `backend/requirements.lock.txt`에 기록되어 있습니다.
 
-### frontend (타입·린트 검증)
+## 마이그레이션
 
-```bash
-cd frontend
-npm install
-npm run typecheck
-npm run lint
-```
+- 스키마는 Django migration만 관리합니다. `web` 컨테이너는 기동 시 `python manage.py migrate`를 실행합니다.
+- 첫 migration은 새 DB에서는 테이블을 만들고, 기존 개발 DB에서는 `SeparateDatabaseAndState`와 idempotent SQL로 기존 행을 보존하면서 Django state만 등록합니다. 기존 테이블·볼륨을 삭제하지 않습니다.
 
 ## DBeaver 연결
 
@@ -191,7 +191,7 @@ npm run lint
 | Username | `POSTGRES_USER` (기본 jumong_app) |
 | Password | `.env`의 `POSTGRES_PASSWORD` |
 
-컨테이너 사이에서 backend는 `POSTGRES_HOST`(기본 `db`)로 접속하고, 호스트의 DBeaver는 `localhost`로 접속합니다.
+컨테이너 사이에서 `web`은 `POSTGRES_HOST`(기본 `db`)로 접속하고, 호스트의 DBeaver는 `localhost`로 접속합니다.
 
 ## 작업 흐름
 
