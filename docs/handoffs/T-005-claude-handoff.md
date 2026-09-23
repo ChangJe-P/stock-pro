@@ -1,11 +1,19 @@
 ---
 task_id: T-005
 branch: codex/django
-commit: f75294f
+commit: 306125e
 status: complete
 ---
 
 # Claude Code 구현 인수인계
+
+> 갱신(2026-09-23): Codex 검토 P1 대응. 전환 커밋 `f75294f`, 인수인계 `80c7747`, P1 수정 `306125e`. 아래 "Codex 검토 대응" 절 참조.
+
+## Codex 검토 대응 (P1)
+
+| 지적 | 대응 | 근거 |
+|---|---|---|
+| P1 — 공통 JSON 파서가 dict가 아닌 유효 JSON(예: `[]`)을 422로 거절하지 않아, 배열 body가 500 HTML이 됨(기존 422 JSON 계약 위반) | `trading.views._parse_json_body`에서 파싱 후 `isinstance(dict)`가 아니면 `ApiError(422, "요청 본문은 JSON 객체여야 합니다.")`를 발생시킴. 모든 JSON body endpoint가 공유하므로 collect·orders 모두 안전한 422 JSON을 반환 | `JsonBodyContractTests.test_collect_rejects_json_array_body`, `test_orders_rejects_json_array_body` — `[]` body에 422와 `detail` 확인 |
 
 ## 작업 요약
 
@@ -52,7 +60,7 @@ status: complete
 | 완료 기준 | 근거 | 판정 |
 |---|---|---|
 | 1. Django가 PostgreSQL과 기동하고 root template 렌더링 | `manage.py check` 이상 없음, 실DB 대상 `GET /` 200·대시보드 렌더 확인 | 충족(실DB 확인) |
-| 2. 기존 JSON API 경로·상태 코드·응답 의미 유지 | jumong/urls.py 경로 동일, views가 기존 detail·422·200/404/409/503 유지; Django 테스트 19건 | 충족 |
+| 2. 기존 JSON API 경로·상태 코드·응답 의미 유지 | jumong/urls.py 경로 동일, views가 기존 detail·422·200/404/409/503 유지. 비객체 JSON body(예: `[]`)도 422 JSON으로 처리(P1 수정); Django 테스트 21건 | 충족 |
 | 3. 5개 테이블을 같은 이름·호환 타입 model로 사용, 요청 중 DDL 없음 | models.py db_table, 서비스 코드에 DDL 없음(migration만) | 충족 |
 | 4. 새 DB·기존 DB 채택 절차 문서화·확인 | 0001_initial(SeparateDatabaseAndState+idempotent SQL); 새 테스트 DB 자동 생성 + 기존 dev DB migrate 보존 확인(아래) | 충족(양쪽 실DB 확인) |
 | 5. 다음 거래일 첫 비조정 시가·pykrx 단일 경계·정수/Decimal·원장 중복 방지 유지 | orders.compute_execution/earliest_unadjusted_open_after, market_data 게이트, uq_cash_ledger_execution_order; 관련 테스트 통과 | 충족 |
@@ -72,7 +80,7 @@ status: complete
 |---|---|
 | `python manage.py check` | System check identified no issues |
 | `python manage.py makemigrations --check --dry-run` | No changes detected (model↔migration state 일치) |
-| `python manage.py test trading` | **Ran 19 tests … OK** (health, 시장 데이터 검증·수집·GET 무외부호출, 정책 검증, 단일 계좌·원장, 다음 거래일 시가·비용 올림·현금 부족·반복 체결, 대시보드 읽기 전용) |
+| `python manage.py test trading` | **Ran 21 tests … OK** (health, 시장 데이터 검증·수집·GET 무외부호출, 정책 검증, 단일 계좌·원장, 다음 거래일 시가·비용 올림·현금 부족·반복 체결, 대시보드 읽기 전용, 비객체 JSON body 422 회귀 2건) |
 
 ### 실제 PostgreSQL 확인 — 새 테스트 DB migration
 
@@ -116,5 +124,5 @@ status: complete
 - main/dev로의 병합·push·PR 생성은 규칙에 따라 하지 않았다. Codex 검증 후 진행.
 
 ## 최종 보고
-- 최종 커밋: `f75294f`(전환), 본 인수인계는 별도 커밋
+- 커밋: `f75294f`(전환), `80c7747`(최초 인수인계), `306125e`(P1 수정: 비객체 JSON body 422)
 - 인수인계 파일: `docs/handoffs/T-005-claude-handoff.md`
