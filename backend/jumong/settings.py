@@ -19,6 +19,8 @@ DEBUG = APP_ENV == "development"
 ALLOWED_HOSTS = [h.strip() for h in os.environ.get("DJANGO_ALLOWED_HOSTS", "").split(",") if h.strip()]
 
 INSTALLED_APPS = [
+    # 개발 Compose에서 app static CSS를 제공하기 위한 Django 내장 앱(새 패키지 아님).
+    "django.contrib.staticfiles",
     "trading",
 ]
 
@@ -54,6 +56,9 @@ DATABASES = {
         "PORT": os.environ.get("POSTGRES_PORT", ""),
     }
 }
+
+# app static CSS 제공(개발용 최소 설정). production static 배포(STATIC_ROOT/CDN)는 범위 밖.
+STATIC_URL = "static/"
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 

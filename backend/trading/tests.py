@@ -11,9 +11,15 @@ from unittest.mock import patch
 import pandas as pd
 from django.test import TestCase, override_settings
 
-from trading import accounts, market_data, orders
+from trading import accounts, market_data, orders, portfolio
 from trading.config import VirtualPolicyError, load_virtual_policy
-from trading.models import CashLedgerEntry, DailyPrice, MarketDataCollectionRun, VirtualBuyOrder
+from trading.models import (
+    CashLedgerEntry,
+    DailyPrice,
+    MarketDataCollectionRun,
+    VirtualAccount,
+    VirtualBuyOrder,
+)
 
 POLICY = dict(
     VIRTUAL_INITIAL_CASH_KRW="1000000",
@@ -259,7 +265,234 @@ class DashboardTests(TestCase):
     def test_dashboard_read_only_renders(self):
         res = self.client.get("/")
         self.assertEqual(res.status_code, 200)
-        self.assertContains(res, "가상 학습 계좌")
         # 계좌·주문이 생성되지 않았음(대시보드는 읽기 전용)
-        from trading.models import VirtualAccount
         self.assertEqual(VirtualAccount.objects.count(), 0)
+
+
+# --- T-006 포트폴리오 계산 ---------------------------------------------------
+
+def _account(initial=1_000_000):
+    now = datetime(2024, 1, 1, tzinfo=timezone.utc)
+    acc = VirtualAccount.objects.create(
+        created_at=now, policy_version="v1", initial_cash_krw=initial,
+        buy_fee_rate=0.00015, sell_fee_rate=0.00015, sell_tax_rate=0.0, slippage_bps=0, singleton=True,
+    )
+    CashLedgerEntry.objects.create(
+        account=acc, created_at=now, entry_type="opening_balance", amount_krw=initial, description="개시",
+    )
+    return acc
+
+
+def _fill(acc, ticker, qty, gross, fee, exec_date, decision_date=date(2024, 1, 2)):
+    now = datetime(2024, 1, 5, tzinfo=timezone.utc)
+    order = VirtualBuyOrder.objects.create(
+        account=acc, ticker=ticker, quantity=qty, decision_trade_date=decision_date, created_at=now,
+        status="filled", executed_at=now, execution_trade_date=exec_date,
+        base_open_price_krw=gross // qty if qty else None, execution_price_krw=gross // qty if qty else None,
+        gross_amount_krw=gross, fee_krw=fee, price_data_source="pykrx", price_adjusted=False,
+        price_collection_run_id="r",
+    )
+    # 현금 원장도 함께 남겨 available_cash가 일관되게 한다.
+    CashLedgerEntry.objects.create(
+        account=acc, created_at=now, entry_type="buy_execution", amount_krw=-(gross + fee),
+        description="체결", execution_order_id=order.id,
+    )
+    return order
+
+
+def _price(ticker, d, close):
+    DailyPrice.objects.create(
+        ticker=ticker, trade_date=d, open_price=close, high_price=close, low_price=close,
+        close_price=close, volume=1000, data_source="pykrx", adjusted=False,
+        collected_at=datetime(2024, 1, 1, tzinfo=timezone.utc), collection_run_id="seed",
+    )
+
+
+class PortfolioCalcTests(TestCase):
+    def test_single_holding_valuation(self):
+        acc = _account(1_000_000)
+        _fill(acc, "005930", qty=10, gross=100_000, fee=0, exec_date=date(2024, 1, 3))
+        _price("005930", date(2024, 1, 3), 10_000)
+        _price("005930", date(2024, 1, 5), 12_000)  # 최신 공통일
+        p = portfolio.compute_portfolio(acc)
+        self.assertTrue(p["valuation_available"])
+        self.assertEqual(p["valuation_trade_date"], date(2024, 1, 5))
+        h = p["holdings"][0]
+        self.assertEqual((h["quantity"], h["cost_krw"], h["market_value_krw"], h["pnl_krw"]), (10, 100_000, 120_000, 20_000))
+        self.assertEqual(h["return_pct"], "20.00")
+        self.assertEqual(h["state"], "positive")
+        s = p["summary"]
+        self.assertEqual(s["available_cash_krw"], 900_000)
+        self.assertEqual(s["total_assets_krw"], 1_020_000)
+        self.assertEqual(s["total_pnl_krw"], 20_000)
+        self.assertEqual(s["total_return_pct"], "2.00")
+
+    def test_cost_includes_fee(self):
+        acc = _account()
+        _fill(acc, "005930", qty=10, gross=100_000, fee=50, exec_date=date(2024, 1, 3))
+        _price("005930", date(2024, 1, 3), 10_000)
+        p = portfolio.compute_portfolio(acc)
+        self.assertEqual(p["holdings"][0]["cost_krw"], 100_050)
+
+    def test_multiple_tickers_common_latest_date(self):
+        acc = _account()
+        _fill(acc, "005930", qty=1, gross=10_000, fee=0, exec_date=date(2024, 1, 3))
+        _fill(acc, "000660", qty=1, gross=20_000, fee=0, exec_date=date(2024, 1, 4))
+        _price("005930", date(2024, 1, 2), 9_000)   # 체결일 이전 공통 후보(제외돼야 함)
+        _price("000660", date(2024, 1, 2), 19_000)
+        _price("005930", date(2024, 1, 5), 11_000)
+        _price("000660", date(2024, 1, 5), 21_000)
+        p = portfolio.compute_portfolio(acc)
+        self.assertEqual(p["valuation_trade_date"], date(2024, 1, 5))
+        self.assertEqual(len(p["holdings"]), 2)
+
+    def test_pending_and_rejected_excluded(self):
+        acc = _account()
+        _fill(acc, "005930", qty=1, gross=10_000, fee=0, exec_date=date(2024, 1, 3))
+        _price("005930", date(2024, 1, 3), 10_000)
+        VirtualBuyOrder.objects.create(
+            account=acc, ticker="000660", quantity=5, decision_trade_date=date(2024, 1, 2),
+            created_at=datetime(2024, 1, 5, tzinfo=timezone.utc), status="pending",
+        )
+        VirtualBuyOrder.objects.create(
+            account=acc, ticker="035720", quantity=5, decision_trade_date=date(2024, 1, 2),
+            created_at=datetime(2024, 1, 5, tzinfo=timezone.utc), status="rejected_insufficient_cash",
+        )
+        p = portfolio.compute_portfolio(acc)
+        tickers = {h["ticker"] for h in p["holdings"]}
+        self.assertEqual(tickers, {"005930"})
+
+    def test_no_common_date_is_unavailable(self):
+        acc = _account()
+        _fill(acc, "005930", qty=1, gross=10_000, fee=0, exec_date=date(2024, 1, 3))
+        _fill(acc, "000660", qty=1, gross=20_000, fee=0, exec_date=date(2024, 1, 3))
+        _price("005930", date(2024, 1, 5), 11_000)
+        _price("000660", date(2024, 1, 6), 21_000)  # 겹치는 공통일 없음
+        p = portfolio.compute_portfolio(acc)
+        self.assertFalse(p["valuation_available"])
+        self.assertEqual(p["unavailable_reason"], portfolio.REASON_NO_COMMON_DATE)
+        # 보유 수량·원가는 여전히 표시 가능
+        self.assertEqual(len(p["holdings"]), 2)
+        self.assertIsNone(p["summary"]["total_assets_krw"])
+
+    def test_incomplete_fill_is_unavailable(self):
+        acc = _account()
+        # 체결일 누락(불완전)
+        VirtualBuyOrder.objects.create(
+            account=acc, ticker="005930", quantity=1, decision_trade_date=date(2024, 1, 2),
+            created_at=datetime(2024, 1, 5, tzinfo=timezone.utc), status="filled",
+            executed_at=datetime(2024, 1, 5, tzinfo=timezone.utc), execution_trade_date=None,
+            gross_amount_krw=10_000, fee_krw=0,
+        )
+        p = portfolio.compute_portfolio(acc)
+        self.assertFalse(p["valuation_available"])
+        self.assertEqual(p["unavailable_reason"], portfolio.REASON_INCOMPLETE_FILL)
+
+    def test_empty_holdings(self):
+        acc = _account(1_000_000)
+        p = portfolio.compute_portfolio(acc)
+        self.assertTrue(p["empty"])
+        self.assertIsNone(p["valuation_trade_date"])
+        self.assertEqual(p["summary"]["total_assets_krw"], 1_000_000)
+        self.assertEqual(p["summary"]["total_pnl_krw"], 0)
+
+    def test_get_dashboard_is_read_only(self):
+        acc = _account()
+        _fill(acc, "005930", qty=1, gross=10_000, fee=0, exec_date=date(2024, 1, 3))
+        _price("005930", date(2024, 1, 3), 10_000)
+        before_orders = VirtualBuyOrder.objects.count()
+        before_ledger = CashLedgerEntry.objects.count()
+        before_prices = DailyPrice.objects.count()
+        with patch("trading.market_data.fetch_ohlcv", side_effect=AssertionError("외부 수집 호출")):
+            res = self.client.get("/")
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(VirtualBuyOrder.objects.count(), before_orders)
+        self.assertEqual(CashLedgerEntry.objects.count(), before_ledger)
+        self.assertEqual(DailyPrice.objects.count(), before_prices)
+
+
+class PortfolioInvalidDataTests(TestCase):
+    """비정상 filled 주문(0/음수 금액)·무효 계좌 데이터를 예외 없이 계산 불가로 처리한다."""
+
+    def _price_005930(self):
+        _price("005930", date(2024, 1, 3), 10_000)
+
+    def test_zero_cost_is_unavailable_not_500(self):
+        acc = _account()
+        _fill(acc, "005930", qty=10, gross=0, fee=0, exec_date=date(2024, 1, 3))
+        self._price_005930()
+        p = portfolio.compute_portfolio(acc)  # ZeroDivisionError가 나면 실패
+        self.assertFalse(p["valuation_available"])
+        self.assertEqual(p["unavailable_reason"], portfolio.REASON_INCOMPLETE_FILL)
+
+    def test_negative_gross_is_unavailable(self):
+        acc = _account()
+        _fill(acc, "005930", qty=10, gross=-100, fee=0, exec_date=date(2024, 1, 3))
+        self._price_005930()
+        p = portfolio.compute_portfolio(acc)
+        self.assertFalse(p["valuation_available"])
+        self.assertEqual(p["unavailable_reason"], portfolio.REASON_INCOMPLETE_FILL)
+
+    def test_negative_fee_is_unavailable(self):
+        acc = _account()
+        _fill(acc, "005930", qty=10, gross=100_000, fee=-1, exec_date=date(2024, 1, 3))
+        self._price_005930()
+        p = portfolio.compute_portfolio(acc)
+        self.assertFalse(p["valuation_available"])
+        self.assertEqual(p["unavailable_reason"], portfolio.REASON_INCOMPLETE_FILL)
+
+    def test_invalid_initial_cash_with_holdings(self):
+        acc = _account(initial=0)
+        _fill(acc, "005930", qty=1, gross=10_000, fee=0, exec_date=date(2024, 1, 3))
+        self._price_005930()
+        p = portfolio.compute_portfolio(acc)
+        self.assertFalse(p["valuation_available"])
+        self.assertEqual(p["unavailable_reason"], portfolio.REASON_INVALID_ACCOUNT_DATA)
+
+    def test_invalid_initial_cash_empty(self):
+        acc = _account(initial=0)
+        p = portfolio.compute_portfolio(acc)
+        self.assertTrue(p["empty"])
+        self.assertFalse(p["valuation_available"])
+        self.assertEqual(p["unavailable_reason"], portfolio.REASON_INVALID_ACCOUNT_DATA)
+
+    def test_get_dashboard_200_and_read_only_on_bad_data(self):
+        acc = _account()
+        _fill(acc, "005930", qty=10, gross=0, fee=0, exec_date=date(2024, 1, 3))
+        self._price_005930()
+        before = (VirtualBuyOrder.objects.count(), CashLedgerEntry.objects.count(), DailyPrice.objects.count())
+        with patch("trading.market_data.fetch_ohlcv", side_effect=AssertionError("외부 수집 호출")):
+            res = self.client.get("/")
+        self.assertEqual(res.status_code, 200)  # 500이 아니어야 한다
+        self.assertContains(res, "계산할 수 없습니다")
+        after = (VirtualBuyOrder.objects.count(), CashLedgerEntry.objects.count(), DailyPrice.objects.count())
+        self.assertEqual(before, after)
+
+
+class DashboardRenderTests(TestCase):
+    def test_no_account_notice(self):
+        res = self.client.get("/")
+        self.assertEqual(res.status_code, 200)
+        self.assertContains(res, "아직 가상 학습 계좌가 없습니다")
+
+    def test_empty_holdings_notice(self):
+        _account()
+        res = self.client.get("/")
+        self.assertContains(res, "보유 종목이 없습니다")
+
+    def test_calculation_unavailable_notice(self):
+        acc = _account()
+        VirtualBuyOrder.objects.create(
+            account=acc, ticker="005930", quantity=1, decision_trade_date=date(2024, 1, 2),
+            created_at=datetime(2024, 1, 5, tzinfo=timezone.utc), status="filled",
+            executed_at=datetime(2024, 1, 5, tzinfo=timezone.utc), execution_trade_date=None,
+            gross_amount_krw=10_000, fee_krw=0,
+        )
+        res = self.client.get("/")
+        self.assertContains(res, "계산할 수 없습니다")
+
+    def test_db_error_notice(self):
+        with patch("trading.views.VirtualAccount.objects.first", side_effect=Exception("db down")):
+            res = self.client.get("/")
+        self.assertEqual(res.status_code, 200)
+        self.assertContains(res, "데이터베이스에 연결할 수 없습니다")

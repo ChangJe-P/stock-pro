@@ -16,7 +16,7 @@ from django.shortcuts import render
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_http_methods
 
-from . import accounts, market_data, orders
+from . import accounts, market_data, orders, portfolio
 from .accounts import ACCOUNT_KIND, DISCLAIMER
 from .errors import ApiError
 from .models import VirtualAccount, VirtualBuyOrder
@@ -171,16 +171,17 @@ def virtual_order_execute(request, order_id: int):
 
 @require_http_methods(["GET"])
 def dashboard(request):
-    """계좌 요약과 최근 주문을 읽기 전용으로 표시한다.
+    """포트폴리오 평가와 최근 주문을 읽기 전용으로 표시한다.
 
-    외부 수집·계좌 초기화·주문 체결을 자동으로 시작하지 않는다. DB나 계좌가 없어도 안내만 표시한다.
+    포트폴리오 계산·조회는 읽기 전용이다. 외부 수집·계좌 초기화·주문 체결·원장 쓰기를
+    시작하지 않는다. DB 오류·계좌 없음·보유 없음·계산 불가를 구별해 안내한다.
     """
-    context = {"account": None, "available_cash_krw": None, "recent_orders": [], "disclaimer": DISCLAIMER, "db_error": False}
+    context = {"account": None, "portfolio": None, "recent_orders": [], "disclaimer": DISCLAIMER, "db_error": False}
     try:
         account = VirtualAccount.objects.first()
         if account is not None:
             context["account"] = account
-            context["available_cash_krw"] = accounts.available_cash(account)
+            context["portfolio"] = portfolio.compute_portfolio(account)
             context["recent_orders"] = list(VirtualBuyOrder.objects.order_by("-created_at", "-id")[:20])
     except Exception:
         # DB 미준비 등: 초기화·수집을 시도하지 않고 안내만 표시한다.
