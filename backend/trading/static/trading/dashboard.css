@@ -1,0 +1,94 @@
+/* 주몽 대시보드 스타일. 학습용 투자 장부: 절제된 밝은 배경, navy/blue, 이익 emerald, 손실 red.
+   색·간격·테두리 토큰을 custom property로 한 곳에 둔다. 외부 폰트·이미지·라이브러리를 쓰지 않는다. */
+:root {
+  --bg: #f5f8fc;
+  --surface: #ffffff;
+  --ink: #16233a;
+  --muted: #566178;
+  --line: #d7e0ee;
+  --brand: #1f3a67;
+  --profit: #0f7a53;   /* 흰 배경 대비 4.5:1 이상 */
+  --loss: #b21f2b;
+  --neutral: #566178;
+  --space-1: 0.5rem;
+  --space-2: 1rem;
+  --space-3: 1.5rem;
+  --space-4: 2rem;
+  --radius: 8px;
+  --maxw: 1100px;
+  font-family: system-ui, -apple-system, "Segoe UI", "Malgun Gothic", "Apple SD Gothic Neo", sans-serif;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font-size: 16px;
+  line-height: 1.5;
+}
+
+.page {
+  max-width: var(--maxw);
+  margin: 0 auto;
+  padding: var(--space-3) var(--space-2) var(--space-4);
+}
+
+.site-header { border-bottom: 2px solid var(--brand); padding-bottom: var(--space-2); margin-bottom: var(--space-3); }
+.site-header h1 { color: var(--brand); font-size: 1.6rem; margin: 0 0 0.25rem; }
+.tagline { color: var(--muted); margin: 0 0 0.25rem; }
+.disclaimer { color: var(--ink); background: #eef3fb; border: 1px solid var(--line); border-radius: var(--radius); padding: var(--space-1) var(--space-2); margin: var(--space-1) 0 0; }
+
+main { display: block; }
+section { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: var(--space-2); margin-bottom: var(--space-3); }
+section > h2 { font-size: 1.15rem; color: var(--brand); margin: 0 0 var(--space-2); }
+.unit { color: var(--muted); font-weight: 400; }
+
+/* 안내(빈 상태·오류·계산 불가) */
+.notice p { margin: 0.25rem 0; }
+.notice .headline { font-weight: 600; }
+.notice.warn { border-left: 4px solid var(--loss); }
+.notice.info { border-left: 4px solid var(--brand); }
+
+/* 기준일·출처 */
+.basis dl { display: grid; grid-template-columns: max-content 1fr; gap: 0.35rem var(--space-2); margin: 0; }
+.basis dt { color: var(--muted); }
+.basis dd { margin: 0; }
+
+/* 요약 타일 */
+.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: var(--space-2); }
+.tile { border: 1px solid var(--line); border-radius: var(--radius); padding: var(--space-2); }
+.tile .label { color: var(--muted); font-size: 0.9rem; }
+.tile .value { font-size: 1.3rem; font-weight: 700; margin-top: 0.25rem; }
+.tile .sub { color: var(--muted); font-size: 0.85rem; margin-top: 0.15rem; }
+
+/* 손익 상태: 색은 보조 수단이며 텍스트 상태를 항상 함께 표시한다 */
+.state-positive { color: var(--profit); }
+.state-negative { color: var(--loss); }
+.state-neutral { color: var(--neutral); }
+.state-tag { font-size: 0.85rem; font-weight: 600; }
+
+table { width: 100%; border-collapse: collapse; }
+caption { text-align: left; color: var(--muted); padding-bottom: var(--space-1); }
+th, td { text-align: left; padding: 0.55rem 0.5rem; border-bottom: 1px solid var(--line); vertical-align: top; }
+th[scope="col"] { color: var(--brand); border-bottom: 2px solid var(--line); }
+td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+
+.empty-cell { color: var(--muted); }
+
+/* 키보드 focus를 명확히 유지한다 */
+:focus-visible { outline: 3px solid var(--brand); outline-offset: 2px; }
+
+/* 좁은 화면: 표를 label이 있는 stacked layout으로. 가로 스크롤에 의존하지 않는다. */
+@media (max-width: 640px) {
+  table.stack thead { display: none; }
+  table.stack, table.stack tbody, table.stack tr, table.stack td { display: block; width: 100%; }
+  /* display:block 테이블에서 caption이 한 글자씩 줄바꿈되는 문제를 막는다. */
+  table.stack caption { display: block; width: 100%; }
+  table.stack tr { border: 1px solid var(--line); border-radius: var(--radius); margin-bottom: var(--space-2); padding: 0.25rem 0.5rem; }
+  table.stack td { border-bottom: 1px dashed var(--line); padding: 0.4rem 0.25rem; display: flex; justify-content: space-between; gap: var(--space-2); text-align: right; }
+  table.stack td:last-child { border-bottom: none; }
+  table.stack td::before { content: attr(data-label); font-weight: 600; color: var(--muted); text-align: left; }
+  td.num, th.num { text-align: right; }
+}
