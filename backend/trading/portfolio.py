@@ -16,6 +16,7 @@ from .models import DailyPrice, VirtualBuyOrder
 # 계산 불가 사유(템플릿이 안전한 안내로 변환한다).
 REASON_INCOMPLETE_FILL = "incomplete_fill_data"
 REASON_NO_COMMON_DATE = "no_common_valuation_date"
+REASON_INVALID_ACCOUNT_DATA = "invalid_account_data"
 
 
 def _state(value: int) -> str:
@@ -35,11 +36,15 @@ def _pct(numerator: int, denominator: int) -> str:
 
 
 def _is_complete(order: VirtualBuyOrder) -> bool:
+    # 비어 있는 값뿐 아니라 유효하지 않은 값(0 이하 체결 금액, 음수 수수료)도 불완전으로 본다.
+    # DB에 금액 CHECK 제약이 없어 과거·수동 입력·버그로 생긴 비정상 행을 0으로 추정 보정하지 않는다.
     return (
         order.quantity is not None
         and order.quantity > 0
         and order.gross_amount_krw is not None
+        and order.gross_amount_krw > 0
         and order.fee_krw is not None
+        and order.fee_krw >= 0
         and order.execution_trade_date is not None
     )
 
@@ -102,9 +107,22 @@ def _unavailable_summary(account) -> dict:
 def compute_portfolio(account) -> dict:
     """계좌의 포트폴리오 읽기 모델을 만든다. 읽기 전용 ORM 조회만 수행한다."""
     filled = list(VirtualBuyOrder.objects.filter(account=account, status="filled"))
+    # 최초 가상 현금은 수익률 분모이므로 0 이하·누락이면 안전 처리한다.
+    initial = account.initial_cash_krw
+    initial_ok = isinstance(initial, int) and initial > 0
 
     # 보유 종목 없음: 평가 기준일 없이 빈 상태.
     if not filled:
+        if not initial_ok:
+            return {
+                "empty": True,
+                "valuation_available": False,
+                "unavailable_reason": REASON_INVALID_ACCOUNT_DATA,
+                "valuation_trade_date": None,
+                "price_source": None,
+                "holdings": [],
+                "summary": _unavailable_summary(account),
+            }
         return {
             "empty": True,
             "valuation_available": True,
@@ -137,9 +155,12 @@ def compute_portfolio(account) -> dict:
             "summary": _unavailable_summary(account),
         }
 
-    # 체결 필수값이 불완전하면 0 보정·추정 없이 계산 불가.
-    if has_incomplete or not complete:
+    # 체결 필수값이 불완전/무효하거나 계산된 종목 원가가 0 이하면 0 보정·추정 없이 계산 불가.
+    if has_incomplete or not complete or any(h["cost_krw"] <= 0 for h in agg.values()):
         return _unavailable(REASON_INCOMPLETE_FILL)
+    # 최초 가상 현금이 무효면 총 수익률 분모가 성립하지 않으므로 안전 처리한다.
+    if not initial_ok:
+        return _unavailable(REASON_INVALID_ACCOUNT_DATA)
 
     latest_execution = max(o.execution_trade_date for o in complete)
     tickers = [h["ticker"] for h in base_holdings]

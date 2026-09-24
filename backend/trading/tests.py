@@ -411,6 +411,64 @@ class PortfolioCalcTests(TestCase):
         self.assertEqual(DailyPrice.objects.count(), before_prices)
 
 
+class PortfolioInvalidDataTests(TestCase):
+    """비정상 filled 주문(0/음수 금액)·무효 계좌 데이터를 예외 없이 계산 불가로 처리한다."""
+
+    def _price_005930(self):
+        _price("005930", date(2024, 1, 3), 10_000)
+
+    def test_zero_cost_is_unavailable_not_500(self):
+        acc = _account()
+        _fill(acc, "005930", qty=10, gross=0, fee=0, exec_date=date(2024, 1, 3))
+        self._price_005930()
+        p = portfolio.compute_portfolio(acc)  # ZeroDivisionError가 나면 실패
+        self.assertFalse(p["valuation_available"])
+        self.assertEqual(p["unavailable_reason"], portfolio.REASON_INCOMPLETE_FILL)
+
+    def test_negative_gross_is_unavailable(self):
+        acc = _account()
+        _fill(acc, "005930", qty=10, gross=-100, fee=0, exec_date=date(2024, 1, 3))
+        self._price_005930()
+        p = portfolio.compute_portfolio(acc)
+        self.assertFalse(p["valuation_available"])
+        self.assertEqual(p["unavailable_reason"], portfolio.REASON_INCOMPLETE_FILL)
+
+    def test_negative_fee_is_unavailable(self):
+        acc = _account()
+        _fill(acc, "005930", qty=10, gross=100_000, fee=-1, exec_date=date(2024, 1, 3))
+        self._price_005930()
+        p = portfolio.compute_portfolio(acc)
+        self.assertFalse(p["valuation_available"])
+        self.assertEqual(p["unavailable_reason"], portfolio.REASON_INCOMPLETE_FILL)
+
+    def test_invalid_initial_cash_with_holdings(self):
+        acc = _account(initial=0)
+        _fill(acc, "005930", qty=1, gross=10_000, fee=0, exec_date=date(2024, 1, 3))
+        self._price_005930()
+        p = portfolio.compute_portfolio(acc)
+        self.assertFalse(p["valuation_available"])
+        self.assertEqual(p["unavailable_reason"], portfolio.REASON_INVALID_ACCOUNT_DATA)
+
+    def test_invalid_initial_cash_empty(self):
+        acc = _account(initial=0)
+        p = portfolio.compute_portfolio(acc)
+        self.assertTrue(p["empty"])
+        self.assertFalse(p["valuation_available"])
+        self.assertEqual(p["unavailable_reason"], portfolio.REASON_INVALID_ACCOUNT_DATA)
+
+    def test_get_dashboard_200_and_read_only_on_bad_data(self):
+        acc = _account()
+        _fill(acc, "005930", qty=10, gross=0, fee=0, exec_date=date(2024, 1, 3))
+        self._price_005930()
+        before = (VirtualBuyOrder.objects.count(), CashLedgerEntry.objects.count(), DailyPrice.objects.count())
+        with patch("trading.market_data.fetch_ohlcv", side_effect=AssertionError("외부 수집 호출")):
+            res = self.client.get("/")
+        self.assertEqual(res.status_code, 200)  # 500이 아니어야 한다
+        self.assertContains(res, "계산할 수 없습니다")
+        after = (VirtualBuyOrder.objects.count(), CashLedgerEntry.objects.count(), DailyPrice.objects.count())
+        self.assertEqual(before, after)
+
+
 class DashboardRenderTests(TestCase):
     def test_no_account_notice(self):
         res = self.client.get("/")
