@@ -1,11 +1,19 @@
 ---
 task_id: T-006
 branch: codex/portfolio
-commit: 5a3bbf8
+commit: 087ea96
 status: complete
 ---
 
 # Claude Code 구현 인수인계
+
+> 갱신(2026-09-24): Codex 검토 P1 대응. 구현 `5a3bbf8`, 최초 인수인계 `1e53371`, P1 수정 `087ea96`. 아래 "Codex 검토 대응" 절 참조.
+
+## Codex 검토 대응 (P1)
+
+| 지적 | 대응 | 근거 |
+|---|---|---|
+| P1 — 0원·음수 체결 금액을 유효한 체결로 취급해 종목 원가가 0이 되고 `_pct` 0 나눗셈으로 `GET /`가 500 | `_is_complete`에 `gross_amount_krw > 0`·`fee_krw >= 0` 검증 추가(None뿐 아니라 무효 값도 불완전). `compute_portfolio`에서 계산된 종목 원가가 0 이하면 `REASON_INCOMPLETE_FILL`, 최초 가상 현금이 0 이하면 `REASON_INVALID_ACCOUNT_DATA`로 계산 불가(빈 보유 포함). 0 보정·추정 없음. template에 invalid_account_data 안내 분기 추가 | `PortfolioInvalidDataTests` 6건: 0/음수 gross·음수 fee·무효 초기현금(보유/빈)에서 예외 없이 계산 불가 반환, `GET /`가 200과 "계산할 수 없습니다" 안내, 읽기 전용(주문·원장·일봉 행 수 불변) |
 
 ## 작업 요약
 
@@ -16,7 +24,7 @@ status: complete
 
 | 파일 | 내용 |
 |---|---|
-| backend/trading/portfolio.py (신규) | 읽기 전용 포트폴리오 계산(보유 합산, 공통 평가 기준일 선택, 정수/Decimal 금액·수익률, 계산 불가 사유) |
+| backend/trading/portfolio.py (신규, P1 수정) | 읽기 전용 포트폴리오 계산(보유 합산, 공통 평가 기준일 선택, 정수/Decimal 금액·수익률, 계산 불가 사유). P1: 무효 금액·원가 0 이하·무효 초기현금 안전 처리 |
 | backend/templates/trading/dashboard.html (수정) | semantic HTML 대시보드: 기준일·출처, 요약 타일, 보유 종목 표, 최근 주문 표, 빈/오류/계산 불가 안내. `{% load static %}`로 CSS 연결 |
 | backend/trading/static/trading/dashboard.css (신규) | 색·간격·테두리 토큰(custom property), 접근 대비, 375px stacked table, focus 유지 |
 | backend/trading/views.py (수정) | `dashboard`가 `portfolio.compute_portfolio` 사용. db 오류·계좌 없음·보유 없음·계산 불가 구별 |
@@ -31,13 +39,13 @@ status: complete
 |---|---|---|
 | 1. filled만 종목별 합산, pending·거절 제외 | `portfolio._aggregate_holdings`(status="filled" 필터); `test_pending_and_rejected_excluded` | 충족 |
 | 2. 모든 종목 공통·최신 비조정 종가와 기준일, 기준일은 모든 체결일 이후 | `_pick_valuation_date`(교집합 ∩ `d >= latest_execution`의 max); `test_multiple_tickers_common_latest_date`(체결일 이전 후보 제외) | 충족 |
-| 3. 평가금액·손익·수익률·가용현금·총자산·총손익·총수익률 정수/Decimal, 매수 수수료 원가 포함 | `compute_portfolio` 금액 정수·`_pct` Decimal 2자리, 원가=gross+fee; `test_single_holding_valuation`, `test_cost_includes_fee` | 충족 |
-| 4. 공통일 부재·불완전 체결 시 외부요청·추정·0보정 없이 계산 불가+사유 | `REASON_NO_COMMON_DATE`, `REASON_INCOMPLETE_FILL`; `test_no_common_date_is_unavailable`, `test_incomplete_fill_is_unavailable` | 충족 |
+| 3. 평가금액·손익·수익률·가용현금·총자산·총손익·총수익률 정수/Decimal, 매수 수수료 원가 포함 | `compute_portfolio` 금액 정수·`_pct` Decimal 2자리, 원가=gross+fee; 무효 금액(0/음수)·원가 0 이하·초기현금 0 이하는 계산 불가로 안전 처리(P1 수정); `test_single_holding_valuation`, `test_cost_includes_fee`, `PortfolioInvalidDataTests` | 충족(P1 수정) |
+| 4. 공통일 부재·불완전/무효 체결 시 외부요청·추정·0보정 없이 계산 불가+사유 | `REASON_NO_COMMON_DATE`, `REASON_INCOMPLETE_FILL`, `REASON_INVALID_ACCOUNT_DATA`; `test_no_common_date_is_unavailable`, `test_incomplete_fill_is_unavailable`, `PortfolioInvalidDataTests` | 충족(P1 수정) |
 | 5. GET / 읽기 전용, 계산·기준일·출처·보유·최근주문 표시, 빈/DB/계좌 구별 | `views.dashboard` + template 분기; `DashboardRenderTests` 4건 | 충족 |
 | 6. static CSS·semantic HTML만, 외부 font/CSS/JS·새 framework 없음 | dashboard.css 1개, `{% load static %}`, system font stack; JS/CDN 없음 | 충족 |
 | 7. 375px~desktop 반응형, 모바일 표 가로 스크롤 미의존, 색상만으로 손익 전달 안 함 | CSS `@media(max-width:640px)` stacked + `data-label`; 손익 텍스트(이익/손실/변동 없음)+state 클래스; 브라우저 375px 확인 | 충족(브라우저 확인) |
 | 8. 새 migration·테이블·공개 API·자동 수집·form 없음, 기존 JSON API 불변 | 모델 미변경(`makemigrations --check`=No changes), urls 미변경 | 충족 |
-| 9. 기존 테스트 유지 + T-006 테스트 추가 | 전체 33 passed(기존 21 + 신규 12) | 충족 |
+| 9. 기존 테스트 유지 + T-006 테스트 추가 | 전체 39 passed(기존 21 + T-006 계산 12 + P1 회귀 6) | 충족 |
 | 10. 인수인계 작성 | 본 문서 | 충족 |
 
 ## 실행과 검증
@@ -50,9 +58,9 @@ Django 테스트 DB(실제 PostgreSQL에 `test_jumong` 생성·삭제)를 사용
 |---|---|
 | `python manage.py check` | System check identified no issues |
 | `python manage.py makemigrations --check --dry-run` | No changes detected(새 migration 없음) |
-| `python manage.py test trading` | **Ran 33 tests … OK**(기존 21 + T-006 12) |
+| `python manage.py test trading` | **Ran 39 tests … OK**(기존 21 + T-006 계산 12 + P1 회귀 6) |
 
-T-006 신규 테스트: 단일/복수 종목 평가, 매수 수수료 포함 원가, pending·거절 제외, 최신 공통 기준일·체결일 이전 배제, 공통일 부재 계산 불가, 불완전 체결 계산 불가, 빈 보유, GET / 읽기 전용(주문·원장·일봉 행 수 불변, 외부 fetch 미호출), template 안전 렌더(계좌 없음·빈 보유·계산 불가·DB 오류).
+T-006 신규 테스트: 단일/복수 종목 평가, 매수 수수료 포함 원가, pending·거절 제외, 최신 공통 기준일·체결일 이전 배제, 공통일 부재 계산 불가, 불완전 체결 계산 불가, 빈 보유, GET / 읽기 전용(주문·원장·일봉 행 수 불변, 외부 fetch 미호출), template 안전 렌더(계좌 없음·빈 보유·계산 불가·DB 오류). P1 회귀(`PortfolioInvalidDataTests`): 0/음수 gross·음수 fee·무효 초기현금(보유/빈)에서 예외 없이 계산 불가, GET / 200·안내·읽기 전용.
 
 ### 실제 Docker PostgreSQL + 브라우저 확인 (자동 테스트와 별도)
 
@@ -89,5 +97,5 @@ T-006 신규 테스트: 단일/복수 종목 평가, 매수 수수료 포함 원
 - main/dev로의 병합·push·PR은 규칙에 따라 하지 않았다. Codex 검증 후 진행.
 
 ## 최종 보고
-- 커밋: `5a3bbf8`(구현), 본 인수인계는 별도 커밋
+- 커밋: `5a3bbf8`(구현), `1e53371`(최초 인수인계), `087ea96`(P1 수정: 무효 금액·계좌 데이터 계산 불가)
 - 인수인계 파일: `docs/handoffs/T-006-claude-handoff.md`
