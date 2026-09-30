@@ -31,19 +31,33 @@
 
 ## 시장 데이터 변수 (T-002, pykrx)
 
-T-002에서 승인된 유일한 데이터 제공처는 Python 패키지 `pykrx`다. pykrx는 API 키·주소·요청 제한이 필요 없다.
+승인된 유일한 데이터 제공처는 Python 패키지 `pykrx`다. 최신 pykrx는 비조정 일봉 수집에 **KRX 로그인 인증**이 필요할 수 있다(아래 `KRX_ID`/`KRX_PW`).
 
 | 변수 | 용도 | 로컬 값 |
 |---|---|---|
 | MARKET_DATA_PROVIDER | 수집 제공처 선택 | `pykrx` |
-| MARKET_DATA_BASE_URL | pykrx에는 필요 없음 | 비어 있음 |
-| MARKET_DATA_API_KEY | pykrx에는 필요 없음 | 비어 있음 |
-| MARKET_DATA_API_SECRET | pykrx에는 필요 없음 | 비어 있음 |
-| MARKET_DATA_REQUESTS_PER_MINUTE | pykrx에는 필요 없음 | 비어 있음 |
+| MARKET_DATA_BASE_URL | 미사용 | 비어 있음 |
+| MARKET_DATA_API_KEY | 미사용 | 비어 있음 |
+| MARKET_DATA_API_SECRET | 미사용 | 비어 있음 |
+| MARKET_DATA_REQUESTS_PER_MINUTE | 미사용 | 비어 있음 |
 
-- `MARKET_DATA_PROVIDER=pykrx`일 때만 수집을 허용한다. 값이 비어 있거나 다른 값이면 외부 요청을 보내지 않고 비밀값을 포함하지 않는 설정 오류로 끝낸다.
-- backend는 T-002 수집에서 `MARKET_DATA_BASE_URL`·`MARKET_DATA_API_KEY`·`MARKET_DATA_API_SECRET`·`MARKET_DATA_REQUESTS_PER_MINUTE`를 읽지 않으며 로그에도 남기지 않는다.
+- backend는 `MARKET_DATA_BASE_URL`·`MARKET_DATA_API_KEY`·`MARKET_DATA_API_SECRET`·`MARKET_DATA_REQUESTS_PER_MINUTE`를 여전히 읽지 않으며 로그에도 남기지 않는다.
 - pykrx 외 다른 제공처(KIS 등)를 위한 인터페이스·팩토리는 만들지 않는다.
+
+## KRX 인증 변수 (T-008)
+
+최신 pykrx는 KRX 로그인 세션을 사용하며 인증 요청에 아래 값을 쓴다. 이는 시장 데이터 인증 용도이며 실제 증권계좌·실제 주문과 무관하다.
+
+| 변수 | 용도 | 로컬 값 |
+|---|---|---|
+| KRX_ID | KRX 로그인 ID | 로컬 `.env`에만 입력(비어 있으면 수집 안 함) |
+| KRX_PW | KRX 로그인 비밀번호 | 로컬 `.env`에만 입력(비어 있으면 수집 안 함) |
+
+- 실제 값은 **루트 `.env`에만** 둔다. `.env.example`·Git·인수인계·테스트 fixture·화면·로그·오류 응답에는 실제 값을 넣지 않는다.
+- Django 설정 계층(`jumong/settings.py`)에서만 읽고, `trading.config`가 **존재 여부만** 판정한다. 값·길이·마스킹 값을 반환·표시·로그에 남기지 않는다.
+- Docker Compose는 기존 `web.env_file: .env`로만 전달한다. `db` 등 다른 서비스에는 전달하지 않는다.
+- `MARKET_DATA_PROVIDER`가 `pykrx`가 아니거나 `KRX_ID`·`KRX_PW` 중 하나라도 비어 있으면 pykrx import·로그인·외부 요청 없이 안전한 설정 오류(503)로 끝낸다.
+- `.env`를 수정한 뒤에는 이미지 재빌드 없이 `docker compose up -d --force-recreate web`로 `web`만 다시 만들면 새 값이 적용된다.
 
 ## 가상 거래 정책 변수 (T-003, 학습용 시뮬레이션 v1)
 

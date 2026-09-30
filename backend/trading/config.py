@@ -12,9 +12,15 @@ def market_data_provider_normalized() -> str:
     return (settings.MARKET_DATA_PROVIDER or "").strip().lower()
 
 
+def krx_credentials_present() -> bool:
+    # 존재 여부만 판정한다. 값·길이·마스킹을 반환하거나 오류 메시지·로그에 쓰지 않는다.
+    return bool((settings.KRX_ID or "").strip()) and bool((settings.KRX_PW or "").strip())
+
+
 def market_data_configured() -> bool:
-    # T-002에서 승인된 제공처는 pykrx뿐이다. 빈 값이나 다른 값은 미설정으로 본다.
-    return market_data_provider_normalized() == "pykrx"
+    # T-002에서 승인된 제공처는 pykrx뿐이다. 최신 pykrx는 인증이 필요하므로(T-008),
+    # 제공처가 pykrx이고 KRX 자격증명이 모두 있을 때만 설정 완료로 본다.
+    return market_data_provider_normalized() == "pykrx" and krx_credentials_present()
 
 
 # --- 가상 거래 정책(T-003) ---------------------------------------------------

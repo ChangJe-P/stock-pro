@@ -5,9 +5,12 @@
 """
 
 import hashlib
+import io
 import logging
+import threading
 import uuid
 from collections import Counter
+from contextlib import redirect_stderr, redirect_stdout
 from datetime import date, datetime, timezone
 
 from django.db import transaction
@@ -21,6 +24,10 @@ logger = logging.getLogger("jumong.market_data")
 DATA_SOURCE = "pykrx"
 ADJUSTED = False  # 수집 시점의 비조정 가격을 저장한다.
 
+# ponytail: 표준 스트림 전환은 프로세스 전역이라 단일 로컬 web 프로세스를 전제로 전역 잠금 하나로 충분하다.
+#           다중 프로세스·스레드 동시 수집이나 자동 수집을 추가하면 이 가드의 범위·격리를 재검토한다.
+_PYKRX_GUARD = threading.Lock()
+
 _COLUMN_OPEN = "시가"
 _COLUMN_HIGH = "고가"
 _COLUMN_LOW = "저가"
@@ -29,15 +36,22 @@ _COLUMN_VOLUME = "거래량"
 
 
 def fetch_ohlcv(ticker: str, from_date: date, to_date: date):
-    """pykrx로 한 종목·기간의 일봉 OHLCV DataFrame을 가져온다(테스트에서 mock)."""
-    from pykrx import stock  # 지연 임포트
+    """pykrx로 한 종목·기간의 일봉 OHLCV DataFrame을 가져온다(테스트에서 mock).
 
-    return stock.get_market_ohlcv(
-        from_date.strftime("%Y%m%d"),
-        to_date.strftime("%Y%m%d"),
-        ticker,
-        adjusted=ADJUSTED,
-    )
+    최신 pykrx는 import·로그인 중 로그인 ID 등을 표준 출력/오류에 쓸 수 있다.
+    import와 단일 호출을 전역 잠금 안에서 수행하고, 그 사이 표준 출력/오류를 캡처해
+    폐기한다. 캡처한 원문은 logger·HTTP 응답·DB에 전달하지 않는다.
+    """
+    with _PYKRX_GUARD:
+        with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+            from pykrx import stock  # 지연 임포트(로그인 세션 초기화가 여기서 일어날 수 있음)
+
+            return stock.get_market_ohlcv(
+                from_date.strftime("%Y%m%d"),
+                to_date.strftime("%Y%m%d"),
+                ticker,
+                adjusted=ADJUSTED,
+            )
 
 
 def compute_raw_hash(df) -> str:

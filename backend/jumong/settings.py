@@ -70,6 +70,11 @@ LANGUAGE_CODE = "en-us"
 # 시장 데이터 제공처(T-002). pykrx만 승인된 제공처다.
 MARKET_DATA_PROVIDER = os.environ.get("MARKET_DATA_PROVIDER", "")
 
+# KRX 로그인 자격증명(T-008). pykrx 인증 요청에 필요할 수 있다. 존재 여부만 판정에 쓰고
+# 값·길이·마스킹을 반환·표시·로그에 넣지 않는다. 실제 값은 로컬 .env에만 둔다.
+KRX_ID = os.environ.get("KRX_ID", "")
+KRX_PW = os.environ.get("KRX_PW", "")
+
 # 가상 거래 정책(T-003). 원시 문자열로 두고 trading.config에서 형식·범위를 검증한다.
 VIRTUAL_INITIAL_CASH_KRW = os.environ.get("VIRTUAL_INITIAL_CASH_KRW")
 VIRTUAL_BUY_FEE_RATE = os.environ.get("VIRTUAL_BUY_FEE_RATE")
