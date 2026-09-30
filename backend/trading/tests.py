@@ -9,6 +9,7 @@ from decimal import Decimal
 from unittest.mock import patch
 
 import pandas as pd
+from django.db import OperationalError
 from django.test import Client, TestCase, override_settings
 
 from trading import accounts, market_data, orders, portfolio
@@ -601,3 +602,42 @@ class SetupScreenTests(TestCase):
         res = self.client.get("/setup?collection_run=does-not-exist")
         self.assertEqual(res.status_code, 200)
         self.assertContains(res, "찾을 수 없습니다")
+
+    # --- P1: DB 오류는 500·예외 노출이 아니라 안전한 503 안내 ---
+
+    def test_get_setup_db_error_is_safe_503(self):
+        before = (VirtualAccount.objects.count(), CashLedgerEntry.objects.count(),
+                  DailyPrice.objects.count(), MarketDataCollectionRun.objects.count())
+        with patch("trading.market_data.fetch_ohlcv", side_effect=AssertionError("외부 수집 호출")), \
+             patch("trading.views.MarketDataCollectionRun.objects.filter",
+                   side_effect=OperationalError("db outage secret-like-detail")):
+            res = self.client.get("/setup?collection_run=abc123")
+        self.assertEqual(res.status_code, 503)
+        self.assertNotContains(res, "secret-like-detail", status_code=503)
+        self.assertContains(res, "데이터베이스에 연결할 수 없습니다", status_code=503)
+        after = (VirtualAccount.objects.count(), CashLedgerEntry.objects.count(),
+                 DailyPrice.objects.count(), MarketDataCollectionRun.objects.count())
+        self.assertEqual(before, after)
+
+    def test_setup_initialize_db_error_is_safe_503(self):
+        with patch("trading.market_data.fetch_ohlcv", side_effect=AssertionError("외부 수집 호출")), \
+             patch("trading.views.accounts.initialize_account",
+                   side_effect=OperationalError("db outage secret-like-detail")):
+            res = self.client.post("/setup/account/initialize")
+        self.assertEqual(res.status_code, 503)
+        self.assertNotContains(res, "secret-like-detail", status_code=503)
+        self.assertContains(res, "데이터베이스에 연결할 수 없습니다", status_code=503)
+        self.assertEqual(VirtualAccount.objects.count(), 0)
+        self.assertEqual(CashLedgerEntry.objects.count(), 0)
+
+    def test_setup_collect_db_error_is_safe_503(self):
+        with patch("trading.market_data.fetch_ohlcv", side_effect=AssertionError("외부 수집 호출")), \
+             patch("trading.views.market_data.collect_daily_prices",
+                   side_effect=OperationalError("db outage secret-like-detail")):
+            res = self.client.post("/setup/market-data/collect",
+                                   {"ticker": "005930", "from_date": "2024-01-02", "to_date": "2024-01-05"})
+        self.assertEqual(res.status_code, 503)
+        self.assertNotContains(res, "secret-like-detail", status_code=503)
+        self.assertContains(res, "데이터베이스에 연결할 수 없습니다", status_code=503)
+        self.assertEqual(MarketDataCollectionRun.objects.count(), 0)
+        self.assertEqual(DailyPrice.objects.count(), 0)

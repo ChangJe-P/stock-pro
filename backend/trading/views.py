@@ -10,7 +10,7 @@ from datetime import date
 
 from django.conf import settings
 from django.core.serializers.json import DjangoJSONEncoder
-from django.db import connection
+from django.db import DatabaseError, connection
 from django.http import HttpResponseRedirect, JsonResponse
 from django.shortcuts import render
 from django.urls import reverse
@@ -221,10 +221,18 @@ def _setup_context() -> dict:
             except VirtualPolicyError as exc:
                 ctx["policy_error"] = str(exc)
         ctx["market_configured"] = market_data_configured()
-    except Exception:
-        # DB 미준비 등: 계좌 생성·수집을 시도하지 않고 안내만 표시한다.
+    except DatabaseError:
+        # DB 준비/연결 오류만 안전 안내로 전환한다(예외 원문·연결 정보 미노출).
+        # 프로그래밍 오류는 넓게 삼키지 않는다.
         ctx["db_error"] = True
     return ctx
+
+
+def _db_error_response(request):
+    """DB 오류를 예외 문자열 없이 503 HTML 안내로 렌더링한다. 아무 것도 쓰지 않는다."""
+    return render(
+        request, "trading/setup.html", {"disclaimer": DISCLAIMER, "db_error": True}, status=503
+    )
 
 
 @require_http_methods(["GET"])
@@ -235,12 +243,18 @@ def setup(request):
     run_id = request.GET.get("collection_run")
     if run_id and not ctx["db_error"]:
         ctx["collection_run_id"] = run_id
-        run = MarketDataCollectionRun.objects.filter(run_id=run_id).first()
-        if run is None:
-            ctx["collection_missing"] = True  # 없거나 형식이 잘못된 run_id: 안전한 안내
+        try:
+            run = MarketDataCollectionRun.objects.filter(run_id=run_id).first()
+        except DatabaseError:
+            # 저장된 수집 결과 조회 DB 오류: 안전한 안내로 전환한다.
+            ctx["db_error"] = True
         else:
-            ctx["collection_run"] = run
-    return render(request, "trading/setup.html", ctx)
+            if run is None:
+                ctx["collection_missing"] = True  # 없거나 형식이 잘못된 run_id: 안전한 안내
+            else:
+                ctx["collection_run"] = run
+    status = 503 if ctx["db_error"] else 200
+    return render(request, "trading/setup.html", ctx, status=status)
 
 
 @require_http_methods(["POST"])
@@ -252,6 +266,9 @@ def setup_account_initialize(request):
         ctx = _setup_context()
         ctx["account_error"] = exc.detail
         return render(request, "trading/setup.html", ctx, status=exc.status_code)
+    except DatabaseError:
+        # DB 준비/연결 오류: 계좌·원장을 쓰지 않고 안전한 503 안내로 끝낸다.
+        return _db_error_response(request)
     # PRG: 새로고침으로 POST가 반복되지 않게 303으로 GET /setup에 이동한다.
     response = HttpResponseRedirect(reverse("setup"))
     response.status_code = 303
@@ -287,6 +304,9 @@ def setup_market_data_collect(request):
         ctx["collect_error"] = exc.detail
         ctx["collect_form"] = form
         return render(request, "trading/setup.html", ctx, status=exc.status_code)
+    except DatabaseError:
+        # 수집 실행 기록·가격 저장 DB 오류: 안전한 503 안내로 끝낸다(예외 원문 미노출).
+        return _db_error_response(request)
     # PRG: 수집 실행 기록을 읽어 표시하도록 303으로 이동한다.
     response = HttpResponseRedirect(reverse("setup") + f"?collection_run={result['run_id']}")
     response.status_code = 303
