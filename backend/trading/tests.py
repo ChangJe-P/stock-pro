@@ -4,6 +4,10 @@ health, 시장 데이터 검증·upsert·GET 무외부호출, 단일 계좌·원
 현금 부족·반복 체결, root template 렌더링을 확인한다.
 """
 
+import io
+import sys
+import types
+from contextlib import redirect_stdout
 from datetime import date, datetime, timezone
 from decimal import Decimal
 from unittest.mock import patch
@@ -13,7 +17,7 @@ from django.db import OperationalError
 from django.test import Client, TestCase, override_settings
 
 from trading import accounts, market_data, orders, portfolio
-from trading.config import VirtualPolicyError, load_virtual_policy
+from trading.config import VirtualPolicyError, load_virtual_policy, market_data_configured
 from trading.models import (
     CashLedgerEntry,
     DailyPrice,
@@ -30,6 +34,9 @@ POLICY = dict(
     VIRTUAL_SLIPPAGE_BPS="0",
     VIRTUAL_TRADING_POLICY_VERSION="vtest",
     MARKET_DATA_PROVIDER="pykrx",
+    # 테스트 전용 가짜 자격증명(실제 값 아님). 존재 여부 판정과 비노출 검증에만 쓴다.
+    KRX_ID="test-krx-id",
+    KRX_PW="test-krx-pw",
 )
 
 
@@ -641,3 +648,92 @@ class SetupScreenTests(TestCase):
         self.assertContains(res, "데이터베이스에 연결할 수 없습니다", status_code=503)
         self.assertEqual(MarketDataCollectionRun.objects.count(), 0)
         self.assertEqual(DailyPrice.objects.count(), 0)
+
+
+# --- T-008 KRX 인증 기반 pykrx 수집 --------------------------------------------
+
+_FAKE_UPSTREAM = "FAKEID123 FAKEPW456 raw-response-secret"
+
+
+def _fake_pykrx(get_market_ohlcv):
+    """가짜 pykrx 패키지. from pykrx import stock가 이 stock을 얻게 한다."""
+    stock = types.SimpleNamespace(get_market_ohlcv=get_market_ohlcv)
+    pkg = types.ModuleType("pykrx")
+    pkg.stock = stock
+    return {"pykrx": pkg, "pykrx.stock": stock}
+
+
+@override_settings(**POLICY)
+class KrxAuthConfigTests(TestCase):
+    def _assert_blocked(self):
+        # 게이트가 fetch(=pykrx import) 이전에 막는지 확인한다.
+        with patch("trading.market_data.fetch_ohlcv", side_effect=AssertionError("pykrx import/호출")):
+            res = self.client.post(
+                "/setup/market-data/collect",
+                {"ticker": "005930", "from_date": "2024-01-02", "to_date": "2024-01-05"},
+            )
+        self.assertEqual(res.status_code, 503)
+        self.assertEqual(MarketDataCollectionRun.objects.count(), 0)
+        self.assertEqual(DailyPrice.objects.count(), 0)
+
+    @override_settings(KRX_ID="")
+    def test_missing_krx_id_blocks_503_without_import(self):
+        self.assertFalse(market_data_configured())
+        self._assert_blocked()
+
+    @override_settings(KRX_PW="")
+    def test_missing_krx_pw_blocks_503_without_import(self):
+        self.assertFalse(market_data_configured())
+        self._assert_blocked()
+
+    @override_settings(MARKET_DATA_PROVIDER="other")
+    def test_provider_not_pykrx_blocks_503(self):
+        self.assertFalse(market_data_configured())
+        self._assert_blocked()
+
+    def test_full_config_is_configured(self):
+        self.assertTrue(market_data_configured())
+
+    def test_config_never_returns_credential_values(self):
+        # 판정 함수는 불리언만 반환한다. 값이 문자열로 새지 않는다.
+        self.assertIn(market_data_configured(), (True, False))
+        self.assertIsInstance(market_data_configured(), bool)
+
+
+@override_settings(**POLICY)
+class KrxUpstreamNonLeakTests(TestCase):
+    def test_upstream_stdout_and_exception_not_leaked_on_failure(self):
+        def boom(*a, **k):
+            print(_FAKE_UPSTREAM)  # upstream이 표준 출력에 로그인 정보를 씀
+            raise RuntimeError("upstream error " + _FAKE_UPSTREAM)
+
+        cap = io.StringIO()
+        with patch.dict(sys.modules, _fake_pykrx(boom)), redirect_stdout(cap), \
+             self.assertLogs("jumong.market_data", level="WARNING") as logs:
+            res = self.client.post(
+                "/setup/market-data/collect",
+                {"ticker": "005930", "from_date": "2024-01-02", "to_date": "2024-01-05"},
+            )
+        self.assertEqual(res.status_code, 502)
+        # 응답·로그·실행 기록·가드 외부 표준 출력 어디에도 upstream 원문이 없다.
+        self.assertNotContains(res, _FAKE_UPSTREAM, status_code=502)
+        self.assertNotIn(_FAKE_UPSTREAM, "\n".join(logs.output))
+        self.assertNotIn(_FAKE_UPSTREAM, cap.getvalue())
+        run = MarketDataCollectionRun.objects.get()
+        self.assertEqual(run.status, "failed")
+        self.assertNotIn(_FAKE_UPSTREAM, run.failure_reason or "")
+
+    def test_upstream_stdout_not_leaked_on_success(self):
+        def ok(*a, **k):
+            print(_FAKE_UPSTREAM)  # 성공 경로에서도 표준 출력에 씀
+            return _df([("2024-01-02", 100, 110, 90, 105, 1000)])
+
+        cap = io.StringIO()
+        with patch.dict(sys.modules, _fake_pykrx(ok)), redirect_stdout(cap):
+            result = market_data.collect_daily_prices("005930", date(2024, 1, 2), date(2024, 1, 5))
+        self.assertEqual(result["status"], "success")
+        self.assertNotIn(_FAKE_UPSTREAM, cap.getvalue())   # 가드가 캡처해 실제 stdout에 안 감
+        self.assertNotIn(_FAKE_UPSTREAM, str(result))
+        run = MarketDataCollectionRun.objects.get(run_id=result["run_id"])
+        self.assertEqual(run.status, "success")
+        self.assertNotIn(_FAKE_UPSTREAM, run.raw_hash)
