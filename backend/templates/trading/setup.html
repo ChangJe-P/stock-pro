@@ -1,0 +1,127 @@
+{% load static %}<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>주몽 — 가상투자 시작·데이터 준비</title>
+  <link rel="stylesheet" href="{% static 'trading/dashboard.css' %}">
+</head>
+<body>
+  <div class="page">
+    <header class="site-header">
+      <h1>주몽</h1>
+      <p class="tagline">가상 학습 투자 장부 · 시작·데이터 준비</p>
+      <p class="disclaimer">{{ disclaimer }} 계좌 생성과 일봉 수집은 아래 버튼(명시적 요청)으로만 시작합니다. 화면을 보거나 새로고침해도 수집·체결·원장 쓰기를 시작하지 않습니다.</p>
+      <nav class="site-nav" aria-label="주요 화면">
+        <a href="{% url 'dashboard' %}">대시보드</a>
+        <a href="{% url 'setup' %}" aria-current="page">시작·데이터 준비</a>
+      </nav>
+    </header>
+
+    <main>
+    {% if db_error %}
+      <section class="notice warn">
+        <h2>상태</h2>
+        <p class="headline">데이터베이스에 연결할 수 없습니다.</p>
+        <p>서비스와 DB가 준비되면 계좌 상태와 수집 form이 표시됩니다. 이 화면은 아무 것도 변경하지 않습니다.</p>
+      </section>
+    {% else %}
+      {# 1. 가상 학습 계좌 상태 #}
+      <section class="account">
+        <h2>가상 학습 계좌</h2>
+        {% if account_error %}
+          <p class="notice warn" role="alert">{{ account_error }}</p>
+        {% endif %}
+        {% if account %}
+          <dl class="kv">
+            <dt>최초 가상 현금 <span class="unit">(KRW)</span></dt><dd>{{ account.initial_cash_krw }}</dd>
+            <dt>가용 현금 <span class="unit">(KRW)</span></dt><dd>{{ available_cash_krw }}</dd>
+            <dt>정책 버전</dt><dd>{{ account.policy_version }}</dd>
+          </dl>
+          <p class="help">계좌가 이미 있습니다. 학습용 가상 현금이며 실제 돈·계좌·주문과 무관합니다. 재설정·시작 현금 변경은 제공하지 않습니다.</p>
+        {% elif policy_error %}
+          <p class="notice warn" role="alert">가상 거래 정책 설정이 유효하지 않아 계좌를 시작할 수 없습니다: {{ policy_error }} 설정을 확인한 뒤 다시 시도하세요.</p>
+        {% else %}
+          <p>아직 가상 학습 계좌가 없습니다. 아래 값은 검증된 정책 설정에서 읽은 학습용 가정입니다.</p>
+          <dl class="kv">
+            <dt>시작 가상 현금 <span class="unit">(KRW)</span></dt><dd>{{ policy.initial_cash_krw }}</dd>
+            <dt>정책 버전</dt><dd>{{ policy.policy_version }}</dd>
+          </dl>
+          <form method="post" action="{% url 'setup_account_initialize' %}" class="action-form">
+            {% csrf_token %}
+            <button type="submit">가상 학습 계좌 시작</button>
+          </form>
+          <p class="help">한 번만 생성됩니다. 이미 계좌가 있으면 기존 계좌를 그대로 사용하며 현금·원장·정책을 재설정하지 않습니다.</p>
+        {% endif %}
+      </section>
+
+      {# 2. 일봉 수동 수집 form #}
+      <section class="collect">
+        <h2>일봉 수동 수집</h2>
+        <p>사용자가 입력한 한 종목·기간의 일봉을 저장된 제공처(pykrx)로 <strong>직접 요청할 때만</strong> 수집합니다. 계좌가 없어도 수집할 수 있습니다(가격은 계좌와 독립된 학습 재료).</p>
+        {% if collect_error %}
+          <p class="notice warn" role="alert">{{ collect_error }}</p>
+        {% endif %}
+        <form method="post" action="{% url 'setup_market_data_collect' %}" class="stack-form">
+          {% csrf_token %}
+          <div class="form-field">
+            <label for="ticker">종목 코드</label>
+            <input id="ticker" name="ticker" inputmode="numeric" pattern="\d{6}" maxlength="6"
+                   required aria-describedby="ticker-help" value="{{ collect_form.ticker }}">
+            <p class="help" id="ticker-help">국내 종목 숫자 6자리. 예: 005930</p>
+          </div>
+          <div class="form-field">
+            <label for="from_date">시작일</label>
+            <input id="from_date" name="from_date" type="date" required aria-describedby="from-help" value="{{ collect_form.from_date }}">
+            <p class="help" id="from-help">ISO 날짜(YYYY-MM-DD).</p>
+          </div>
+          <div class="form-field">
+            <label for="to_date">종료일</label>
+            <input id="to_date" name="to_date" type="date" required aria-describedby="to-help" value="{{ collect_form.to_date }}">
+            <p class="help" id="to-help">시작일보다 늦을 수 없습니다.</p>
+          </div>
+          <button type="submit">일봉 수집</button>
+        </form>
+        <p class="help">가격 단위는 KRW, 수량 단위는 주입니다. 수집은 비조정(adjusted=False) 일봉만 저장하며, 외부 조회가 실패해도 다른 제공처로 우회하거나 자동 재시도하지 않습니다.</p>
+      </section>
+
+      {# 3. 수집 실행 결과(PRG 뒤 GET에서 표시) #}
+      {% if collection_run_id %}
+      <section class="collect-result">
+        <h2>수집 결과</h2>
+        {% if collection_missing %}
+          <p class="notice info">요청한 수집 실행 기록(run_id)을 찾을 수 없습니다. 수집을 다시 실행하거나 입력을 확인하세요. 이 안내는 아무 것도 수집하거나 저장하지 않습니다.</p>
+        {% else %}
+          <table class="stack">
+            <caption>수집 실행 결과 (외부 수집을 다시 시작하지 않고 저장된 기록을 표시)</caption>
+            <tbody>
+              <tr><th scope="row">종목</th><td>{{ collection_run.ticker }}</td></tr>
+              <tr><th scope="row">요청 기간</th><td>{{ collection_run.from_date|date:"Y-m-d" }} ~ {{ collection_run.to_date|date:"Y-m-d" }}</td></tr>
+              <tr><th scope="row">데이터 출처</th><td>{{ collection_run.data_source }}</td></tr>
+              <tr><th scope="row">비조정 여부</th><td>{{ adjusted_label }}</td></tr>
+              <tr><th scope="row">수집 기준 시각</th><td>{{ collection_run.collected_at|date:"Y-m-d H:i:s e" }}</td></tr>
+              <tr><th scope="row">상태</th><td>{{ collection_run.status }}{% if collection_run.failure_reason %} — {{ collection_run.failure_reason }}{% endif %}</td></tr>
+              <tr><th scope="row">반환 행</th><td class="num">{{ collection_run.returned_rows }}</td></tr>
+              <tr><th scope="row">삽입 행</th><td class="num">{{ collection_run.inserted_rows }}</td></tr>
+              <tr><th scope="row">갱신 행</th><td class="num">{{ collection_run.updated_rows }}</td></tr>
+              <tr><th scope="row">제외 행</th><td class="num">{{ collection_run.excluded_rows }}</td></tr>
+            </tbody>
+          </table>
+          {% if collection_run.excluded_reasons %}
+            <h3>제외 사유</h3>
+            <ul class="reasons">
+              {% for reason, count in collection_run.excluded_reasons.items %}
+                <li>{{ reason }}: {{ count }}건</li>
+              {% endfor %}
+            </ul>
+          {% else %}
+            <p class="help">제외된 행이 없습니다.</p>
+          {% endif %}
+        {% endif %}
+      </section>
+      {% endif %}
+    {% endif %}
+    </main>
+  </div>
+</body>
+</html>

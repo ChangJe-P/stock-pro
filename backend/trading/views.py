@@ -11,15 +11,17 @@ from datetime import date
 from django.conf import settings
 from django.core.serializers.json import DjangoJSONEncoder
 from django.db import connection
-from django.http import JsonResponse
+from django.http import HttpResponseRedirect, JsonResponse
 from django.shortcuts import render
+from django.urls import reverse
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_http_methods
 
 from . import accounts, market_data, orders, portfolio
 from .accounts import ACCOUNT_KIND, DISCLAIMER
+from .config import VirtualPolicyError, load_virtual_policy, market_data_configured
 from .errors import ApiError
-from .models import VirtualAccount, VirtualBuyOrder
+from .models import MarketDataCollectionRun, VirtualAccount, VirtualBuyOrder
 
 _TICKER = re.compile(r"^\d{6}$")
 
@@ -187,3 +189,105 @@ def dashboard(request):
         # DB 미준비 등: 초기화·수집을 시도하지 않고 안내만 표시한다.
         context["db_error"] = True
     return render(request, "trading/dashboard.html", context)
+
+
+# --- 시작·데이터 준비 화면(T-007) --------------------------------------------
+
+def _setup_context() -> dict:
+    """GET/POST가 공유하는 읽기 전용 컨텍스트. 계좌·정책·설정만 읽고 아무 것도 쓰지 않는다."""
+    ctx = {
+        "disclaimer": DISCLAIMER,
+        "db_error": False,
+        "account": None,
+        "available_cash_krw": None,
+        "policy": None,        # 계좌 없음: 검증된 정책의 시작 현금·버전
+        "policy_error": None,  # 정책 설정 오류(값 노출 없는 안전한 메시지)
+        "market_configured": False,
+        "adjusted_label": "비조정 (adjusted=False)",
+    }
+    try:
+        account = VirtualAccount.objects.first()
+        if account is not None:
+            ctx["account"] = account
+            ctx["available_cash_krw"] = accounts.available_cash(account)
+        else:
+            # 계좌가 없을 때만 검증된 정책에서 시작 현금·버전을 읽어 안내한다(숫자 하드코딩 없음).
+            try:
+                policy = load_virtual_policy()
+                ctx["policy"] = {
+                    "initial_cash_krw": policy.initial_cash_krw,
+                    "policy_version": policy.policy_version,
+                }
+            except VirtualPolicyError as exc:
+                ctx["policy_error"] = str(exc)
+        ctx["market_configured"] = market_data_configured()
+    except Exception:
+        # DB 미준비 등: 계좌 생성·수집을 시도하지 않고 안내만 표시한다.
+        ctx["db_error"] = True
+    return ctx
+
+
+@require_http_methods(["GET"])
+def setup(request):
+    """읽기 전용 시작·데이터 준비 화면. 계좌·원장·가격 행을 쓰거나 pykrx를 호출하지 않는다."""
+    ctx = _setup_context()
+    # 수집 실행 결과 표시(있을 때만). 기존 실행 기록을 읽을 뿐 외부 수집을 시작하지 않는다.
+    run_id = request.GET.get("collection_run")
+    if run_id and not ctx["db_error"]:
+        ctx["collection_run_id"] = run_id
+        run = MarketDataCollectionRun.objects.filter(run_id=run_id).first()
+        if run is None:
+            ctx["collection_missing"] = True  # 없거나 형식이 잘못된 run_id: 안전한 안내
+        else:
+            ctx["collection_run"] = run
+    return render(request, "trading/setup.html", ctx)
+
+
+@require_http_methods(["POST"])
+def setup_account_initialize(request):
+    """CSRF 보호 form 제출로만 최초 계좌를 만든다. 반복 제출은 기존 계좌를 재설정하지 않는다."""
+    try:
+        accounts.initialize_account()  # one-time 초기화 규칙 재사용
+    except ApiError as exc:
+        ctx = _setup_context()
+        ctx["account_error"] = exc.detail
+        return render(request, "trading/setup.html", ctx, status=exc.status_code)
+    # PRG: 새로고침으로 POST가 반복되지 않게 303으로 GET /setup에 이동한다.
+    response = HttpResponseRedirect(reverse("setup"))
+    response.status_code = 303
+    return response
+
+
+@require_http_methods(["POST"])
+def setup_market_data_collect(request):
+    """CSRF 보호 form 제출로만 한 종목·기간의 일봉을 수집한다. 입력 검증은 T-002 규칙을 재사용한다."""
+    form = {
+        "ticker": request.POST.get("ticker", ""),
+        "from_date": request.POST.get("from_date", ""),
+        "to_date": request.POST.get("to_date", ""),
+    }
+    # 1) 서버 검증. 실패 시 pykrx를 호출하지 않고 422 HTML로 같은 화면에 오류를 표시한다.
+    try:
+        ticker = _require_ticker(form["ticker"])
+        from_date = _require_date(form["from_date"], "from_date")
+        to_date = _require_date(form["to_date"], "to_date")
+        if from_date > to_date:
+            raise ApiError(422, "from_date는 to_date보다 늦을 수 없습니다.")
+    except ApiError as exc:
+        ctx = _setup_context()
+        ctx["collect_error"] = exc.detail
+        ctx["collect_form"] = form
+        return render(request, "trading/setup.html", ctx, status=exc.status_code)
+    # 2) 유효 입력에서만 기존 수집 함수를 한 번 호출한다(설정 확인·pykrx는 함수 내부).
+    try:
+        result = market_data.collect_daily_prices(ticker, from_date, to_date)
+    except ApiError as exc:
+        # 설정 오류(503)·외부 조회 실패(502)를 값 노출 없이 구분해 표시한다. 다른 제공처·재시도 없음.
+        ctx = _setup_context()
+        ctx["collect_error"] = exc.detail
+        ctx["collect_form"] = form
+        return render(request, "trading/setup.html", ctx, status=exc.status_code)
+    # PRG: 수집 실행 기록을 읽어 표시하도록 303으로 이동한다.
+    response = HttpResponseRedirect(reverse("setup") + f"?collection_run={result['run_id']}")
+    response.status_code = 303
+    return response
