@@ -1,11 +1,19 @@
 ---
 task_id: T-007
 branch: codex/onboarding
-commit: b97e6f1
+commit: 0cb3651
 status: complete
 ---
 
 # Claude Code 구현 인수인계
+
+> 갱신(2026-09-30): Codex 검토 P1 대응. 구현 `b97e6f1`, 최초 인수인계 `b59bdd0`, P1 수정 `0cb3651`. 아래 "Codex 검토 대응" 절 참조.
+
+## Codex 검토 대응 (P1)
+
+| 지적 | 대응 | 근거 |
+|---|---|---|
+| P1 — DB 오류가 `/setup`의 세 경로에서 500으로 전파되고 DEBUG에서 예외 원문이 HTML에 노출(완료 기준 8의 안전한 DB 오류 안내 미충족) | 세 경로에서 `django.db.DatabaseError`만 명시적으로 처리해 예외 문자열·연결 정보 없이 **503 HTML 안내**를 렌더링. `_setup_context`의 except를 `DatabaseError`로 좁혀 프로그래밍 오류를 넓게 삼키지 않음. `setup(GET)`의 `collection_run` 조회도 try/except로 감싸 503. 두 POST는 `_db_error_response`로 계좌·원장·가격·수집 실행 기록을 쓰지 않고 503 | `test_get_setup_db_error_is_safe_503`, `test_setup_initialize_db_error_is_safe_503`, `test_setup_collect_db_error_is_safe_503` — `OperationalError` mock에서 503·내부 예외 문자열 미포함·데이터 미기록·외부 pykrx 미호출 |
 
 ## 작업 요약
 
@@ -16,7 +24,7 @@ status: complete
 
 | 파일 | 내용 |
 |---|---|
-| backend/trading/views.py (수정) | `setup`(GET 읽기 전용), `setup_account_initialize`(POST, CSRF), `setup_market_data_collect`(POST, CSRF) + 공통 `_setup_context`. 기존 검증 헬퍼(`_require_ticker`/`_require_date`)·서비스 재사용 |
+| backend/trading/views.py (수정, P1 수정) | `setup`(GET 읽기 전용), `setup_account_initialize`(POST, CSRF), `setup_market_data_collect`(POST, CSRF) + 공통 `_setup_context`. 기존 검증 헬퍼(`_require_ticker`/`_require_date`)·서비스 재사용. P1: 세 경로의 `DatabaseError`를 안전한 503으로 처리(`_db_error_response`) |
 | backend/jumong/urls.py (수정) | `/setup`, `/setup/account/initialize`, `/setup/market-data/collect` 경로 추가(기존 경로 불변) |
 | backend/templates/trading/setup.html (신규) | semantic HTML 시작·데이터 준비 화면(계좌 상태, CSRF form, 수집 form, 수집 결과) |
 | backend/trading/static/trading/dashboard.css (수정) | nav·key-value·form·버튼·stacked 표 스타일을 기존 토큰으로 최소 확장 |
@@ -35,7 +43,7 @@ status: complete
 | 5. 수집 form 서버 검증, 잘못된 입력 422·외부 미호출 | `setup_market_data_collect`(T-002 헬퍼); `test_collect_bad_input_is_422_without_external_call`, `test_csrf_protected_forms` | 충족 |
 | 6. 유효 POST만 수집 1회 호출, 성공 PRG로 결과 표시 | `collect_daily_prices` 1회 + 303 `?collection_run=`; `test_collect_success_prg_and_result_display` | 충족 |
 | 7. 결과에 출처·비조정·기준시각·상태·행수·제외사유 표시 | setup.html 수집 결과 표; 실DB 브라우저 확인 | 충족 |
-| 8. 설정 오류·조회 실패·DB 오류 안전 처리(비밀값 없음) | ApiError 상태 재렌더(503/502), `_setup_context` db_error; `test_collect_config_error_is_safe`, `test_collect_fetch_failure_is_safe` | 충족 |
+| 8. 설정 오류·조회 실패·DB 오류 안전 처리(비밀값 없음) | ApiError 상태 재렌더(503/502) + DatabaseError → 503 안전 안내(예외 원문 미노출, P1 수정); `test_collect_config_error_is_safe`, `test_collect_fetch_failure_is_safe`, DB 오류 회귀 3건 | 충족(P1 수정) |
 | 9. 기존 JSON API·/health·대시보드 읽기 전용·T-001~T-006 유지 | urls 기존 경로 불변, csrf_exempt 불변; 전체 51 테스트 통과 | 충족 |
 | 10. check·migration dry-run·전체 테스트, 검증 구분 기록 | 아래 실행과 검증 | 충족 |
 
@@ -49,9 +57,9 @@ Django 테스트 DB(실제 PostgreSQL `test_jumong` 생성·삭제). pykrx는 `p
 |---|---|
 | `python manage.py check` | System check identified no issues |
 | `python manage.py makemigrations --check --dry-run` | No changes detected |
-| `python manage.py test trading` | **Ran 51 tests … OK**(기존 39 + T-007 12) |
+| `python manage.py test trading` | **Ran 54 tests … OK**(기존 39 + T-007 12 + P1 DB오류 회귀 3) |
 
-T-007 신규 테스트: GET /setup 읽기 전용(행 수 불변·fetch 미호출), 계좌 없음 시작현금·form, 첫 초기화 303·계좌 생성, 반복 초기화 비재설정, 계좌 있음 재설정 숨김, 정책 오류 버튼 숨김, CSRF 보호(403), 수집 입력 오류 422·외부 미호출, 수집 성공 PRG·결과 표시, 설정 오류 503, 조회 실패 502(메시지에 원 예외 미노출), 없는 run_id 안전 안내.
+T-007 신규 테스트: GET /setup 읽기 전용(행 수 불변·fetch 미호출), 계좌 없음 시작현금·form, 첫 초기화 303·계좌 생성, 반복 초기화 비재설정, 계좌 있음 재설정 숨김, 정책 오류 버튼 숨김, CSRF 보호(403), 수집 입력 오류 422·외부 미호출, 수집 성공 PRG·결과 표시, 설정 오류 503, 조회 실패 502(메시지에 원 예외 미노출), 없는 run_id 안전 안내. P1 회귀: GET·두 POST의 `OperationalError`에서 503·내부 예외 문자열 미포함·데이터 미기록·외부 pykrx 미호출.
 
 ### 실제 Docker Compose(db·web) + 브라우저 확인 (자동 테스트와 별도)
 
@@ -80,5 +88,5 @@ T-007 신규 테스트: GET /setup 읽기 전용(행 수 불변·fetch 미호출
 - main/dev로의 병합·push·PR은 규칙에 따라 하지 않았다. Codex 검증 후 진행.
 
 ## 최종 보고
-- 커밋: `b97e6f1`(구현), 본 인수인계는 별도 커밋
+- 커밋: `b97e6f1`(구현), `b59bdd0`(최초 인수인계), `0cb3651`(P1 수정: DatabaseError 503 안전 처리)
 - 인수인계 파일: `docs/handoffs/T-007-claude-handoff.md`
