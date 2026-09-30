@@ -9,7 +9,8 @@ from decimal import Decimal
 from unittest.mock import patch
 
 import pandas as pd
-from django.test import TestCase, override_settings
+from django.db import OperationalError
+from django.test import Client, TestCase, override_settings
 
 from trading import accounts, market_data, orders, portfolio
 from trading.config import VirtualPolicyError, load_virtual_policy
@@ -496,3 +497,147 @@ class DashboardRenderTests(TestCase):
             res = self.client.get("/")
         self.assertEqual(res.status_code, 200)
         self.assertContains(res, "데이터베이스에 연결할 수 없습니다")
+
+
+# --- T-007 시작·데이터 준비 화면 --------------------------------------------
+
+@override_settings(**POLICY)
+class SetupScreenTests(TestCase):
+    def test_get_setup_is_read_only(self):
+        before = (
+            VirtualAccount.objects.count(), VirtualBuyOrder.objects.count(),
+            CashLedgerEntry.objects.count(), DailyPrice.objects.count(),
+            MarketDataCollectionRun.objects.count(),
+        )
+        with patch("trading.market_data.fetch_ohlcv", side_effect=AssertionError("외부 수집 호출")):
+            res = self.client.get("/setup")
+        self.assertEqual(res.status_code, 200)
+        after = (
+            VirtualAccount.objects.count(), VirtualBuyOrder.objects.count(),
+            CashLedgerEntry.objects.count(), DailyPrice.objects.count(),
+            MarketDataCollectionRun.objects.count(),
+        )
+        self.assertEqual(before, after)
+
+    def test_get_setup_no_account_shows_start_cash_and_form(self):
+        res = self.client.get("/setup")
+        self.assertContains(res, "가상 학습 계좌 시작")   # 최초 생성 form 버튼
+        self.assertContains(res, "1000000")             # 정책 설정의 시작 현금(하드코딩 아님)
+        self.assertContains(res, "csrfmiddlewaretoken")  # CSRF 보호 form
+
+    def test_post_initialize_creates_account_and_redirects_303(self):
+        res = self.client.post("/setup/account/initialize")
+        self.assertEqual(res.status_code, 303)
+        self.assertEqual(res["Location"], "/setup")
+        self.assertEqual(VirtualAccount.objects.count(), 1)
+        self.assertEqual(CashLedgerEntry.objects.count(), 1)
+
+    def test_repeat_initialize_does_not_reset(self):
+        self.client.post("/setup/account/initialize")
+        self.client.post("/setup/account/initialize")
+        self.assertEqual(VirtualAccount.objects.count(), 1)
+        self.assertEqual(CashLedgerEntry.objects.count(), 1)
+
+    def test_get_setup_with_account_hides_reset(self):
+        self.client.post("/setup/account/initialize")
+        res = self.client.get("/setup")
+        self.assertContains(res, "최초 가상 현금")
+        self.assertContains(res, "재설정")               # "재설정하지 않습니다" 안내
+        self.assertNotContains(res, "가상 학습 계좌 시작")  # 생성 버튼 없음
+
+    @override_settings(VIRTUAL_INITIAL_CASH_KRW="0")
+    def test_policy_error_hides_button(self):
+        res = self.client.get("/setup")
+        self.assertContains(res, "정책 설정이 유효하지 않아")
+        self.assertNotContains(res, "가상 학습 계좌 시작")
+
+    def test_csrf_protected_forms(self):
+        c = Client(enforce_csrf_checks=True)
+        self.assertEqual(c.post("/setup/account/initialize").status_code, 403)
+        self.assertEqual(
+            c.post("/setup/market-data/collect", {"ticker": "005930", "from_date": "2024-01-02", "to_date": "2024-01-05"}).status_code,
+            403,
+        )
+
+    def test_collect_bad_input_is_422_without_external_call(self):
+        with patch("trading.market_data.fetch_ohlcv", side_effect=AssertionError("외부 수집 호출")):
+            bad_ticker = self.client.post("/setup/market-data/collect", {"ticker": "12", "from_date": "2024-01-02", "to_date": "2024-01-05"})
+            reversed_range = self.client.post("/setup/market-data/collect", {"ticker": "005930", "from_date": "2024-01-05", "to_date": "2024-01-02"})
+            bad_date = self.client.post("/setup/market-data/collect", {"ticker": "005930", "from_date": "nope", "to_date": "2024-01-05"})
+        self.assertEqual(bad_ticker.status_code, 422)
+        self.assertEqual(reversed_range.status_code, 422)
+        self.assertEqual(bad_date.status_code, 422)
+        self.assertEqual(MarketDataCollectionRun.objects.count(), 0)
+
+    def test_collect_success_prg_and_result_display(self):
+        df = _df([("2024-01-02", 100, 110, 90, 105, 1000)])
+        with patch("trading.market_data.fetch_ohlcv", return_value=df):
+            res = self.client.post("/setup/market-data/collect", {"ticker": "005930", "from_date": "2024-01-02", "to_date": "2024-01-05"})
+        self.assertEqual(res.status_code, 303)
+        self.assertTrue(res["Location"].startswith("/setup?collection_run="))
+        run = MarketDataCollectionRun.objects.get()
+        # PRG 뒤 GET: 외부 수집 없이 실행 기록을 표시한다.
+        with patch("trading.market_data.fetch_ohlcv", side_effect=AssertionError("GET이 외부 수집")):
+            result = self.client.get(res["Location"])
+        self.assertEqual(result.status_code, 200)
+        self.assertContains(result, "수집 결과")
+        self.assertContains(result, run.status)
+        self.assertContains(result, "pykrx")
+
+    @override_settings(MARKET_DATA_PROVIDER="")
+    def test_collect_config_error_is_safe(self):
+        with patch("trading.market_data.fetch_ohlcv", side_effect=AssertionError("외부 수집 호출")):
+            res = self.client.post("/setup/market-data/collect", {"ticker": "005930", "from_date": "2024-01-02", "to_date": "2024-01-05"})
+        self.assertEqual(res.status_code, 503)
+        self.assertContains(res, "pykrx", status_code=503)
+        self.assertEqual(MarketDataCollectionRun.objects.count(), 0)
+
+    def test_collect_fetch_failure_is_safe(self):
+        with patch("trading.market_data.fetch_ohlcv", side_effect=RuntimeError("network down")):
+            res = self.client.post("/setup/market-data/collect", {"ticker": "005930", "from_date": "2024-01-02", "to_date": "2024-01-05"})
+        self.assertEqual(res.status_code, 502)
+        self.assertNotContains(res, "network down", status_code=502)
+
+    def test_unknown_collection_run_is_safe(self):
+        res = self.client.get("/setup?collection_run=does-not-exist")
+        self.assertEqual(res.status_code, 200)
+        self.assertContains(res, "찾을 수 없습니다")
+
+    # --- P1: DB 오류는 500·예외 노출이 아니라 안전한 503 안내 ---
+
+    def test_get_setup_db_error_is_safe_503(self):
+        before = (VirtualAccount.objects.count(), CashLedgerEntry.objects.count(),
+                  DailyPrice.objects.count(), MarketDataCollectionRun.objects.count())
+        with patch("trading.market_data.fetch_ohlcv", side_effect=AssertionError("외부 수집 호출")), \
+             patch("trading.views.MarketDataCollectionRun.objects.filter",
+                   side_effect=OperationalError("db outage secret-like-detail")):
+            res = self.client.get("/setup?collection_run=abc123")
+        self.assertEqual(res.status_code, 503)
+        self.assertNotContains(res, "secret-like-detail", status_code=503)
+        self.assertContains(res, "데이터베이스에 연결할 수 없습니다", status_code=503)
+        after = (VirtualAccount.objects.count(), CashLedgerEntry.objects.count(),
+                 DailyPrice.objects.count(), MarketDataCollectionRun.objects.count())
+        self.assertEqual(before, after)
+
+    def test_setup_initialize_db_error_is_safe_503(self):
+        with patch("trading.market_data.fetch_ohlcv", side_effect=AssertionError("외부 수집 호출")), \
+             patch("trading.views.accounts.initialize_account",
+                   side_effect=OperationalError("db outage secret-like-detail")):
+            res = self.client.post("/setup/account/initialize")
+        self.assertEqual(res.status_code, 503)
+        self.assertNotContains(res, "secret-like-detail", status_code=503)
+        self.assertContains(res, "데이터베이스에 연결할 수 없습니다", status_code=503)
+        self.assertEqual(VirtualAccount.objects.count(), 0)
+        self.assertEqual(CashLedgerEntry.objects.count(), 0)
+
+    def test_setup_collect_db_error_is_safe_503(self):
+        with patch("trading.market_data.fetch_ohlcv", side_effect=AssertionError("외부 수집 호출")), \
+             patch("trading.views.market_data.collect_daily_prices",
+                   side_effect=OperationalError("db outage secret-like-detail")):
+            res = self.client.post("/setup/market-data/collect",
+                                   {"ticker": "005930", "from_date": "2024-01-02", "to_date": "2024-01-05"})
+        self.assertEqual(res.status_code, 503)
+        self.assertNotContains(res, "secret-like-detail", status_code=503)
+        self.assertContains(res, "데이터베이스에 연결할 수 없습니다", status_code=503)
+        self.assertEqual(MarketDataCollectionRun.objects.count(), 0)
+        self.assertEqual(DailyPrice.objects.count(), 0)

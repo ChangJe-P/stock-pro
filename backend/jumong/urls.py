@@ -7,6 +7,10 @@ from trading import views
 urlpatterns = [
     # 읽기 전용 대시보드
     path("", views.dashboard, name="dashboard"),
+    # 시작·데이터 준비 화면(T-007, HTML)
+    path("setup", views.setup, name="setup"),
+    path("setup/account/initialize", views.setup_account_initialize, name="setup_account_initialize"),
+    path("setup/market-data/collect", views.setup_market_data_collect, name="setup_market_data_collect"),
     # 상태 확인
     path("health", views.health, name="health"),
     # 시장 데이터(T-002 경로 유지)

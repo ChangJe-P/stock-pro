@@ -63,6 +63,31 @@ section > h2 { font-size: 1.15rem; color: var(--brand); margin: 0 0 var(--space-
 .tile .value { font-size: 1.3rem; font-weight: 700; margin-top: 0.25rem; }
 .tile .sub { color: var(--muted); font-size: 0.85rem; margin-top: 0.15rem; }
 
+/* 시작·데이터 준비 화면: 네비게이션·key-value·form (T-007) */
+.site-nav { margin-top: var(--space-1); display: flex; gap: var(--space-2); flex-wrap: wrap; }
+.site-nav a { color: var(--brand); text-decoration: underline; }
+.site-nav a[aria-current="page"] { font-weight: 700; }
+.kv { display: grid; grid-template-columns: max-content 1fr; gap: 0.35rem var(--space-2); margin: 0 0 var(--space-2); }
+.kv dt { color: var(--muted); }
+.kv dd { margin: 0; font-variant-numeric: tabular-nums; }
+.help { color: var(--muted); font-size: 0.9rem; margin: 0.25rem 0 0; }
+.stack-form { display: grid; gap: var(--space-2); max-width: 26rem; }
+.form-field { display: grid; gap: 0.25rem; }
+.form-field label { font-weight: 600; }
+.form-field input {
+  font: inherit; padding: 0.5rem; border: 1px solid var(--line); border-radius: var(--radius);
+  background: var(--surface); color: var(--ink); min-height: 44px;
+}
+button[type="submit"] {
+  font: inherit; font-weight: 600; cursor: pointer; min-height: 44px; padding: 0.5rem 1rem;
+  background: var(--brand); color: #ffffff; border: 1px solid var(--brand); border-radius: var(--radius);
+  justify-self: start;
+}
+button[type="submit"]:hover { background: #16304f; }
+.action-form { margin: var(--space-1) 0; }
+.reasons { margin: 0.25rem 0 0; padding-left: 1.25rem; }
+.reasons li { margin: 0.15rem 0; }
+
 /* 손익 상태: 색은 보조 수단이며 텍스트 상태를 항상 함께 표시한다 */
 .state-positive { color: var(--profit); }
 .state-negative { color: var(--loss); }
@@ -86,6 +111,8 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
   table.stack, table.stack tbody, table.stack tr, table.stack td { display: block; width: 100%; }
   /* display:block 테이블에서 caption이 한 글자씩 줄바꿈되는 문제를 막는다. */
   table.stack caption { display: block; width: 100%; }
+  /* key-value 표(행 머리글 th[scope=row])는 라벨을 블록으로 보이고 값은 td로 쌓는다. */
+  table.stack th[scope="row"] { display: block; width: 100%; text-align: left; color: var(--muted); padding: 0.4rem 0.25rem 0; border: none; }
   table.stack tr { border: 1px solid var(--line); border-radius: var(--radius); margin-bottom: var(--space-2); padding: 0.25rem 0.5rem; }
   table.stack td { border-bottom: 1px dashed var(--line); padding: 0.4rem 0.25rem; display: flex; justify-content: space-between; gap: var(--space-2); text-align: right; }
   table.stack td:last-child { border-bottom: none; }
