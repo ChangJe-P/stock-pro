@@ -12,6 +12,10 @@
       <h1>주몽</h1>
       <p class="tagline">가상 학습 투자 장부 · 읽기 전용 화면</p>
       <p class="disclaimer">{{ disclaimer }} 이 화면은 조회만 하며 데이터 수집·계좌 초기화·주문 체결을 시작하지 않습니다.</p>
+      <nav class="site-nav" aria-label="주요 화면">
+        <a href="{% url 'dashboard' %}" aria-current="page">대시보드</a>
+        <a href="{% url 'setup' %}">시작·데이터 준비</a>
+      </nav>
     </header>
 
     <main>
@@ -28,7 +32,9 @@
         <p>JSON API로 계좌를 초기화하면 보유 종목과 평가 결과가 여기에 표시됩니다.</p>
       </section>
     {% else %}
-      {# 2. 평가 기준일·가격 출처 또는 평가 불가 사유 #}
+      <div class="dashboard-grid">
+      <div class="col col-left">
+      {# 좌측: 평가 기준일·가격 출처 또는 평가 불가 사유 #}
       <section class="basis">
         <h2>평가 기준</h2>
         {% if portfolio.empty %}
@@ -53,7 +59,9 @@
         {% endif %}
       </section>
 
-      {# 3. 계좌 요약 #}
+      </div>{# /col-left #}
+      <div class="col col-center">
+      {# 중앙: 계좌 요약과 보유 종목 #}
       <section class="summary">
         <h2>계좌 요약</h2>
         <div class="tiles">
@@ -146,7 +154,9 @@
         {% endif %}
       </section>
 
-      {# 5. 최근 매수 주문 #}
+      </div>{# /col-center #}
+      <div class="col col-right">
+      {# 우측: 실제 최근 매수 주문 #}
       <section class="orders">
         <h2>최근 매수 주문</h2>
         {% if recent_orders %}
@@ -181,6 +191,8 @@
           <p class="empty-cell">아직 주문이 없습니다.</p>
         {% endif %}
       </section>
+      </div>{# /col-right #}
+      </div>{# /dashboard-grid #}
     {% endif %}
     </main>
   </div>

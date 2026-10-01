@@ -737,3 +737,34 @@ class KrxUpstreamNonLeakTests(TestCase):
         run = MarketDataCollectionRun.objects.get(run_id=result["run_id"])
         self.assertEqual(run.status, "success")
         self.assertNotIn(_FAKE_UPSTREAM, run.raw_hash)
+
+
+# --- T-009 화면 render 계약 (먼저 실패 → template/CSS 최소 변경으로 통과) -------
+
+@override_settings(**POLICY)
+class UiRefreshRenderTests(TestCase):
+    def test_dashboard_has_common_nav_and_identity(self):
+        res = self.client.get("/")
+        self.assertEqual(res.status_code, 200)
+        self.assertContains(res, "가상 학습 투자 장부")
+        self.assertContains(res, 'href="/setup"')  # 공통 navigation
+        self.assertContains(res, 'href="/"')
+
+    def test_setup_has_common_nav_and_flow(self):
+        res = self.client.get("/setup")
+        self.assertEqual(res.status_code, 200)
+        self.assertContains(res, "가상 학습 투자 장부")
+        self.assertContains(res, 'href="/setup"')
+        self.assertContains(res, 'href="/"')
+        self.assertContains(res, "대시보드 확인")  # 3단계 흐름의 마지막 단계 안내
+
+    def test_dashboard_still_read_only_on_render(self):
+        # UI 변경이 읽기 전용 보장을 깨지 않는다.
+        before = (VirtualAccount.objects.count(), VirtualBuyOrder.objects.count(),
+                  CashLedgerEntry.objects.count(), DailyPrice.objects.count())
+        with patch("trading.market_data.fetch_ohlcv", side_effect=AssertionError("외부 수집 호출")):
+            self.client.get("/")
+            self.client.get("/setup")
+        after = (VirtualAccount.objects.count(), VirtualBuyOrder.objects.count(),
+                 CashLedgerEntry.objects.count(), DailyPrice.objects.count())
+        self.assertEqual(before, after)
