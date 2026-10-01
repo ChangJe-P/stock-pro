@@ -26,6 +26,16 @@
         <p>서비스와 DB가 준비되면 계좌 상태와 수집 form이 표시됩니다. 이 화면은 아무 것도 변경하지 않습니다.</p>
       </section>
     {% else %}
+      {# 학습 흐름 안내: 실제 동작 순서 #}
+      <section class="flow-guide">
+        <h2>학습 시작 순서</h2>
+        <ol class="flow">
+          <li><span class="flow-step">1</span> 가상계좌 시작 <span class="flow-desc">최초 가상 현금으로 학습 계좌를 한 번 만듭니다.</span></li>
+          <li><span class="flow-step">2</span> 일봉 수동 수집 <span class="flow-desc">학습할 종목·기간의 저장용 일봉을 직접 요청해 모읍니다.</span></li>
+          <li><span class="flow-step">3</span> 대시보드 확인 <span class="flow-desc">보유 종목과 평가 결과를 대시보드에서 복기합니다.</span></li>
+        </ol>
+      </section>
+
       {# 1. 가상 학습 계좌 상태 #}
       <section class="account">
         <h2>가상 학습 계좌</h2>

@@ -1,5 +1,7 @@
-/* 주몽 대시보드 스타일. 학습용 투자 장부: 절제된 밝은 배경, navy/blue, 이익 emerald, 손실 red.
-   색·간격·테두리 토큰을 custom property로 한 곳에 둔다. 외부 폰트·이미지·라이브러리를 쓰지 않는다. */
+/* 주몽 대시보드 스타일. 학습용 투자 장부: 밝은 중립 배경, 흰 패널, 얇은 구분선, 남색 텍스트.
+   국내 주식 관례(T-009): 상승·이익은 빨강(--up), 하락·손실은 파랑(--down). 색만으로 의미를
+   전달하지 않고 텍스트·부호를 함께 쓴다. 색·간격·테두리 토큰을 custom property로 한 곳에 둔다.
+   외부 폰트·이미지·라이브러리·JS를 쓰지 않는다. */
 :root {
   --bg: #f5f8fc;
   --surface: #ffffff;
@@ -7,15 +9,16 @@
   --muted: #566178;
   --line: #d7e0ee;
   --brand: #1f3a67;
-  --profit: #0f7a53;   /* 흰 배경 대비 4.5:1 이상 */
-  --loss: #b21f2b;
+  --up: #c3141b;       /* 상승·이익(빨강). 흰 배경 대비 4.5:1 이상 */
+  --down: #1457b4;     /* 하락·손실(파랑). 흰 배경 대비 4.5:1 이상 */
+  --loss: #b21f2b;     /* 경고·오류 테두리(빨강) */
   --neutral: #566178;
   --space-1: 0.5rem;
   --space-2: 1rem;
   --space-3: 1.5rem;
   --space-4: 2rem;
   --radius: 8px;
-  --maxw: 1100px;
+  --maxw: 1280px;
   font-family: system-ui, -apple-system, "Segoe UI", "Malgun Gothic", "Apple SD Gothic Neo", sans-serif;
 }
 
@@ -63,6 +66,31 @@ section > h2 { font-size: 1.15rem; color: var(--brand); margin: 0 0 var(--space-
 .tile .value { font-size: 1.3rem; font-weight: 700; margin-top: 0.25rem; }
 .tile .sub { color: var(--muted); font-size: 0.85rem; margin-top: 0.15rem; }
 
+/* 대시보드 금융 화면 배치. 기본은 한 열(모바일 우선), desktop에서 좌/중/우 3영역. */
+.dashboard-grid { display: grid; gap: var(--space-3); }
+.col { display: grid; gap: var(--space-3); align-content: start; min-width: 0; }
+.dashboard-grid section { margin-bottom: 0; }
+@media (min-width: 1025px) {
+  /* 좌: 평가 해석 정보, 중: 계좌·보유 종목(가장 넓게), 우: 최근 주문 */
+  .dashboard-grid { grid-template-columns: minmax(220px, 1fr) minmax(0, 2.3fr) minmax(240px, 1fr); align-items: start; }
+}
+@media (max-width: 768px) {
+  .tiles { grid-template-columns: repeat(2, 1fr); }
+}
+@media (max-width: 440px) {
+  .tiles { grid-template-columns: 1fr; }
+}
+
+/* 시작·데이터 준비: 실제 3단계 학습 흐름 안내 */
+.flow { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--space-2); }
+.flow li { border: 1px solid var(--line); border-radius: var(--radius); padding: var(--space-1) var(--space-2); }
+.flow-step { display: inline-block; min-width: 1.6rem; height: 1.6rem; line-height: 1.6rem; text-align: center;
+  background: var(--brand); color: #fff; border-radius: 50%; font-weight: 700; margin-right: 0.4rem; }
+.flow-desc { display: block; color: var(--muted); font-size: 0.9rem; margin-top: 0.15rem; }
+@media (min-width: 769px) {
+  .flow { grid-template-columns: repeat(3, 1fr); }
+}
+
 /* 시작·데이터 준비 화면: 네비게이션·key-value·form (T-007) */
 .site-nav { margin-top: var(--space-1); display: flex; gap: var(--space-2); flex-wrap: wrap; }
 .site-nav a { color: var(--brand); text-decoration: underline; }
@@ -88,9 +116,9 @@ button[type="submit"]:hover { background: #16304f; }
 .reasons { margin: 0.25rem 0 0; padding-left: 1.25rem; }
 .reasons li { margin: 0.15rem 0; }
 
-/* 손익 상태: 색은 보조 수단이며 텍스트 상태를 항상 함께 표시한다 */
-.state-positive { color: var(--profit); }
-.state-negative { color: var(--loss); }
+/* 손익 상태(국내 관례): 이익·상승 빨강, 손실·하락 파랑. 색은 보조 수단이며 텍스트·부호를 함께 쓴다. */
+.state-positive { color: var(--up); }
+.state-negative { color: var(--down); }
 .state-neutral { color: var(--neutral); }
 .state-tag { font-size: 0.85rem; font-weight: 600; }
 
@@ -105,8 +133,8 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 /* 키보드 focus를 명확히 유지한다 */
 :focus-visible { outline: 3px solid var(--brand); outline-offset: 2px; }
 
-/* 좁은 화면: 표를 label이 있는 stacked layout으로. 가로 스크롤에 의존하지 않는다. */
-@media (max-width: 640px) {
+/* 좁은 화면(태블릿·모바일): 표를 label이 있는 stacked layout으로. 가로 스크롤에 의존하지 않는다. */
+@media (max-width: 768px) {
   table.stack thead { display: none; }
   table.stack, table.stack tbody, table.stack tr, table.stack td { display: block; width: 100%; }
   /* display:block 테이블에서 caption이 한 글자씩 줄바꿈되는 문제를 막는다. */
