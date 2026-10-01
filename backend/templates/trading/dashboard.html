@@ -89,7 +89,7 @@
           <div class="tile">
             <div class="label">총 평가손익 <span class="unit">(KRW)</span></div>
             {% if portfolio.summary.valuation_available %}
-              <div class="value state-{{ portfolio.summary.total_state }}">{{ portfolio.summary.total_pnl_krw }}</div>
+              <div class="value state-{{ portfolio.summary.total_state }}">{% if portfolio.summary.total_state == "positive" %}+{% endif %}{{ portfolio.summary.total_pnl_krw }}</div>
               <div class="sub state-tag state-{{ portfolio.summary.total_state }}">
                 {% if portfolio.summary.total_state == "positive" %}이익{% elif portfolio.summary.total_state == "negative" %}손실{% else %}변동 없음{% endif %}
               </div>
@@ -100,7 +100,7 @@
           <div class="tile">
             <div class="label">총 수익률 <span class="unit">(%)</span></div>
             {% if portfolio.summary.valuation_available %}
-              <div class="value state-{{ portfolio.summary.total_state }}">{{ portfolio.summary.total_return_pct }}%</div>
+              <div class="value state-{{ portfolio.summary.total_state }}">{% if portfolio.summary.total_state == "positive" %}+{% endif %}{{ portfolio.summary.total_return_pct }}%</div>
             {% else %}
               <div class="value empty-cell">계산 불가</div>
             {% endif %}
@@ -137,10 +137,10 @@
                   <td data-label="기준 종가 (KRW)" class="num">{{ h.close_price_krw }}</td>
                   <td data-label="평가금액 (KRW)" class="num">{{ h.market_value_krw }}</td>
                   <td data-label="평가손익 (KRW)" class="num state-{{ h.state }}">
-                    {{ h.pnl_krw }}
+                    {% if h.state == "positive" %}+{% endif %}{{ h.pnl_krw }}
                     <span class="state-tag">{% if h.state == "positive" %}이익{% elif h.state == "negative" %}손실{% else %}변동 없음{% endif %}</span>
                   </td>
-                  <td data-label="수익률 (%)" class="num state-{{ h.state }}">{{ h.return_pct }}%</td>
+                  <td data-label="수익률 (%)" class="num state-{{ h.state }}">{% if h.state == "positive" %}+{% endif %}{{ h.return_pct }}%</td>
                 {% else %}
                   <td data-label="기준 종가 (KRW)" class="num empty-cell">계산 불가</td>
                   <td data-label="평가금액 (KRW)" class="num empty-cell">계산 불가</td>

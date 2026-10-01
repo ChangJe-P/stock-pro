@@ -768,3 +768,35 @@ class UiRefreshRenderTests(TestCase):
         after = (VirtualAccount.objects.count(), VirtualBuyOrder.objects.count(),
                  CashLedgerEntry.objects.count(), DailyPrice.objects.count())
         self.assertEqual(before, after)
+
+
+# --- T-009 P1: 양수 손익·수익률의 + 부호 (음수는 -, 중립은 무부호) --------------
+
+class SignRenderTests(TestCase):
+    def test_positive_values_get_plus_sign(self):
+        acc = _account(1_000_000)
+        _fill(acc, "005930", qty=10, gross=100_000, fee=0, exec_date=date(2024, 1, 3))
+        _price("005930", date(2024, 1, 3), 12_000)  # 이익
+        res = self.client.get("/")
+        self.assertEqual(res.status_code, 200)
+        self.assertContains(res, "+20000")   # 종목·총 평가손익(양수)
+        self.assertContains(res, "+20.00%")  # 종목 수익률(양수)
+        self.assertContains(res, "+2.00%")   # 총 수익률(양수)
+
+    def test_negative_values_keep_minus_no_plus(self):
+        acc = _account(1_000_000)
+        _fill(acc, "005930", qty=10, gross=100_000, fee=0, exec_date=date(2024, 1, 3))
+        _price("005930", date(2024, 1, 3), 8_000)  # 손실
+        res = self.client.get("/")
+        self.assertContains(res, "-20000")
+        self.assertContains(res, "-20.00%")
+        self.assertContains(res, "-2.00%")
+        self.assertNotContains(res, "+-")  # 음수에 + 를 덧붙이지 않는다
+
+    def test_neutral_values_have_no_sign(self):
+        acc = _account(1_000_000)
+        _fill(acc, "005930", qty=10, gross=100_000, fee=0, exec_date=date(2024, 1, 3))
+        _price("005930", date(2024, 1, 3), 10_000)  # 변동 없음(0)
+        res = self.client.get("/")
+        self.assertContains(res, "변동 없음")
+        self.assertNotContains(res, "+0.00%")  # 중립엔 + 없음
