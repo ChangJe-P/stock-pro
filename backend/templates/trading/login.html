@@ -1,0 +1,34 @@
+{% load static %}{% load socialaccount %}<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>주몽 — 로그인</title>
+  <link rel="stylesheet" href="{% static 'trading/dashboard.css' %}">
+</head>
+<body>
+  <div class="page">
+    <header class="site-header">
+      <h1>주몽</h1>
+      <p class="tagline">가상 학습 투자 장부 · 로그인</p>
+      <p class="disclaimer">{{ disclaimer }} 실제 돈·실제 계좌·실제 주문·결제와 무관한 국내 주식 학습용 가상투자 서비스입니다. Google 로그인은 학습 기록을 사용자별로 나누기 위한 신원 확인에만 사용합니다.</p>
+    </header>
+
+    <main>
+      <section class="account">
+        <h2>로그인</h2>
+        {% if google_configured %}
+          <p>Google 계정으로 로그인하면 본인만의 가상 학습 계좌·주문 기록을 사용할 수 있습니다.</p>
+          <form method="post" action="{% provider_login_url 'google' process='login' %}" class="action-form">
+            {% csrf_token %}
+            <button type="submit">Google로 로그인</button>
+          </form>
+          <p class="help">요청 권한은 신원 확인용 <code>openid</code>·<code>email</code>·<code>profile</code>뿐입니다. 결제·금융 권한은 요청하지 않습니다.</p>
+        {% else %}
+          <p class="notice info" role="status">Google 로그인이 아직 설정되지 않았습니다. 운영자가 설정을 완료하면 로그인할 수 있습니다. 이 화면은 아무 것도 변경하지 않습니다.</p>
+        {% endif %}
+      </section>
+    </main>
+  </div>
+</body>
+</html>

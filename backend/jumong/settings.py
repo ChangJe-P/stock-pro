@@ -19,17 +19,33 @@ DEBUG = APP_ENV == "development"
 ALLOWED_HOSTS = [h.strip() for h in os.environ.get("DJANGO_ALLOWED_HOSTS", "").split(",") if h.strip()]
 
 INSTALLED_APPS = [
+    # Django 인증·세션·메시지(T-010). Google 로그인은 세션 기반이다.
+    "django.contrib.auth",
+    "django.contrib.contenttypes",
+    "django.contrib.sessions",
+    "django.contrib.messages",
+    "django.contrib.sites",
     # 개발 Compose에서 app static CSS를 제공하기 위한 Django 내장 앱(새 패키지 아님).
     "django.contrib.staticfiles",
+    # Google OAuth(django-allauth). 직접 토큰 교환을 구현하지 않는다.
+    "allauth",
+    "allauth.account",
+    "allauth.socialaccount",
+    "allauth.socialaccount.providers.google",
     "trading",
 ]
 
-# 같은 origin에서 화면과 JSON API를 제공하므로 CORS 미들웨어를 두지 않는다.
-# JSON POST view는 개별적으로 CSRF 예외를 명시한다(비로그인 로컬 API 호환).
+SITE_ID = 1
+
+# 같은 origin에서 화면과 JSON API를 제공하므로 CORS 미들웨어를 두지 않는다(T-010: 세션 로그인 사용).
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
+    "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
+    "django.contrib.auth.middleware.AuthenticationMiddleware",
+    "django.contrib.messages.middleware.MessageMiddleware",
+    "allauth.account.middleware.AccountMiddleware",
 ]
 
 ROOT_URLCONF = "jumong.urls"
@@ -39,9 +55,25 @@ TEMPLATES = [
         "BACKEND": "django.template.backends.django.DjangoTemplates",
         "DIRS": [BASE_DIR / "templates"],
         "APP_DIRS": True,
-        "OPTIONS": {"context_processors": []},
+        "OPTIONS": {
+            "context_processors": [
+                "django.template.context_processors.request",
+                "django.contrib.auth.context_processors.auth",
+                "django.contrib.messages.context_processors.messages",
+            ]
+        },
     },
 ]
+
+AUTHENTICATION_BACKENDS = [
+    "django.contrib.auth.backends.ModelBackend",
+    "allauth.account.auth.backends.AuthenticationBackend",
+]
+
+# 로그인 흐름. 비로그인 HTML은 /login/으로 이동하고, 로그인 성공 후 대시보드로 보낸다.
+LOGIN_URL = "/login/"
+LOGIN_REDIRECT_URL = "/"
+ACCOUNT_LOGOUT_REDIRECT_URL = "/login/"
 
 WSGI_APPLICATION = "jumong.wsgi.application"
 ASGI_APPLICATION = "jumong.asgi.application"
@@ -82,3 +114,30 @@ VIRTUAL_SELL_FEE_RATE = os.environ.get("VIRTUAL_SELL_FEE_RATE")
 VIRTUAL_SELL_TAX_RATE = os.environ.get("VIRTUAL_SELL_TAX_RATE")
 VIRTUAL_SLIPPAGE_BPS = os.environ.get("VIRTUAL_SLIPPAGE_BPS")
 VIRTUAL_TRADING_POLICY_VERSION = os.environ.get("VIRTUAL_TRADING_POLICY_VERSION")
+
+# --- Google OAuth(T-010) -----------------------------------------------------
+# Client ID·Secret·초기 소유자 이메일은 .env와 설정 계층에서만 읽는다. 값·길이·마스킹을
+# template·response·로그·DB에 넣지 않는다. 두 OAuth 값이 모두 있을 때만 provider를 구성한다.
+GOOGLE_OAUTH_CLIENT_ID = os.environ.get("GOOGLE_OAUTH_CLIENT_ID", "")
+GOOGLE_OAUTH_CLIENT_SECRET = os.environ.get("GOOGLE_OAUTH_CLIENT_SECRET", "")
+# 기존 단일 가상계좌를 1회 연결할 수 있는 본인 Google 이메일(없으면 legacy 연결 비활성).
+INITIAL_OWNER_GOOGLE_EMAIL = os.environ.get("INITIAL_OWNER_GOOGLE_EMAIL", "")
+
+# Client ID·Secret은 DB SocialApp이 아니라 설정 기반 APPS에만 둔다(두 값이 모두 있을 때만).
+_GOOGLE_APPS = (
+    [{"client_id": GOOGLE_OAUTH_CLIENT_ID, "secret": GOOGLE_OAUTH_CLIENT_SECRET, "key": ""}]
+    if GOOGLE_OAUTH_CLIENT_ID and GOOGLE_OAUTH_CLIENT_SECRET
+    else []
+)
+SOCIALACCOUNT_PROVIDERS = {
+    "google": {
+        "SCOPE": ["openid", "email", "profile"],  # 최소 identity scope만
+        "AUTH_PARAMS": {"access_type": "online"},  # refresh token 목적의 offline 미사용
+        "OAUTH_PKCE_ENABLED": True,
+        "APPS": _GOOGLE_APPS,
+    }
+}
+# 신원 확인용 소셜 로그인만 사용한다. 비밀번호 로그인·이메일 인증 메일은 쓰지 않는다.
+SOCIALACCOUNT_AUTO_SIGNUP = True
+ACCOUNT_EMAIL_VERIFICATION = "none"
+SOCIALACCOUNT_LOGIN_ON_GET = False  # 소셜 로그인 시작은 CSRF 보호 POST로만

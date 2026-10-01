@@ -1,15 +1,21 @@
 """주몽 URL 라우팅. 기존 JSON API 경로와 root 화면을 같은 origin에서 제공한다."""
 
-from django.urls import path
+from django.urls import include, path
 
 from trading import views
 
 urlpatterns = [
+    # Google OAuth(T-010). allauth가 provider 시작·callback을 처리한다.
+    path("accounts/", include("allauth.urls")),
+    # 자체 로그인 화면·로그아웃(CSRF 보호)
+    path("login/", views.login_view, name="login"),
+    path("logout/", views.logout_view, name="logout"),
     # 읽기 전용 대시보드
     path("", views.dashboard, name="dashboard"),
     # 시작·데이터 준비 화면(T-007, HTML)
     path("setup", views.setup, name="setup"),
     path("setup/account/initialize", views.setup_account_initialize, name="setup_account_initialize"),
+    path("setup/legacy-account/claim", views.setup_legacy_claim, name="setup_legacy_claim"),
     path("setup/market-data/collect", views.setup_market_data_collect, name="setup_market_data_collect"),
     # 상태 확인
     path("health", views.health, name="health"),

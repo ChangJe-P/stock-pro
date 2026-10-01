@@ -11,10 +11,10 @@ from decimal import ROUND_CEILING, Decimal
 
 from django.db import IntegrityError, transaction
 
-from . import accounts, market_data
+from . import accounts, market_data, ownership
 from .accounts import ACCOUNT_KIND, DISCLAIMER
 from .errors import ApiError
-from .models import CashLedgerEntry, VirtualAccount, VirtualBuyOrder
+from .models import CashLedgerEntry, VirtualBuyOrder
 
 logger = logging.getLogger("jumong.virtual_orders")
 
@@ -67,9 +67,9 @@ def _order_response(order: VirtualBuyOrder) -> dict:
     }
 
 
-def create_order(ticker: str, quantity: int, decision_trade_date: date) -> dict:
+def create_order(user, ticker: str, quantity: int, decision_trade_date: date) -> dict:
     """결정일의 비조정 저장 일봉이 있을 때만 pending 매수 주문을 만든다. 현금은 바꾸지 않는다."""
-    account = VirtualAccount.objects.first()
+    account = ownership.get_account_for_user(user)
     if account is None:
         raise ApiError(404, "가상 학습 계좌가 아직 없습니다. 먼저 계좌를 초기화하세요.")
     # 결정일 비조정 일봉 존재만 확인한다. 외부 수집을 시작하지 않는다.
@@ -99,19 +99,20 @@ def _apply_execution(order: VirtualBuyOrder, status_value: str, now, price: dict
     return order
 
 
-def execute_order(order_id: int) -> dict:
-    """지정한 pending 주문 한 건만 수동 체결한다(계좌 잠금으로 직렬화)."""
+def execute_order(user, order_id: int) -> dict:
+    """지정한 pending 주문 한 건만 수동 체결한다(계좌 잠금으로 직렬화). 타인 주문은 404."""
     try:
         with transaction.atomic():
-            # 계좌 행을 잠가 현금 확인·상태 갱신·원장 추가를 직렬화한다.
-            account = VirtualAccount.objects.select_for_update().order_by("id").first()
+            # 로그인 사용자의 계좌 행만 잠가 현금 확인·상태 갱신·원장 추가를 직렬화한다.
+            account = ownership.get_account_for_user(user, for_update=True)
             if account is None:
                 raise ApiError(404, "가상 학습 계좌가 아직 없습니다. 먼저 계좌를 초기화하세요.")
-            try:
-                order = VirtualBuyOrder.objects.select_for_update().get(id=order_id)
-            except VirtualBuyOrder.DoesNotExist:
-                raise ApiError(404, "주문을 찾을 수 없습니다.")
-            if order.account_id != account.id:
+            # 소유 계좌 범위로만 조회해 타 사용자 주문은 존재를 밝히지 않고 404로 끝낸다.
+            order = (
+                VirtualBuyOrder.objects.select_for_update()
+                .filter(id=order_id, account=account).first()
+            )
+            if order is None:
                 raise ApiError(404, "주문을 찾을 수 없습니다.")
             if order.status != "pending":
                 # 이미 filled/rejected: 기존 결과만 반환하고 원장을 더 만들지 않는다.
@@ -145,15 +146,15 @@ def execute_order(order_id: int) -> dict:
     except IntegrityError:
         # 동시 체결 경합으로 원장 유일 제약 위반. 중복 차감 없이 기존 결과를 반환한다.
         logger.warning("체결 원장 유일 제약 위반(동시 체결 추정)")
-        order = VirtualBuyOrder.objects.filter(id=order_id).first()
+        order = VirtualBuyOrder.objects.filter(id=order_id, account__owner=user).first()
         if order is None:
             raise ApiError(404, "주문을 찾을 수 없습니다.")
         return _order_response(order)
 
 
-def list_orders() -> dict:
-    """주문을 created_at ASC, id ASC로 반환한다. 외부 수집·체결·상태 변경을 시작하지 않는다."""
-    orders = VirtualBuyOrder.objects.order_by("created_at", "id")
+def list_orders(user) -> dict:
+    """로그인 사용자의 주문을 created_at ASC, id ASC로 반환한다. 외부 수집·체결을 시작하지 않는다."""
+    orders = VirtualBuyOrder.objects.filter(account__owner=user).order_by("created_at", "id")
     return {
         "account_kind": ACCOUNT_KIND,
         "disclaimer": DISCLAIMER,

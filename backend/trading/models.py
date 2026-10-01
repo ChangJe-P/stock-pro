@@ -6,6 +6,7 @@
 - 스키마는 migration이 관리한다(요청 처리 중 DDL 없음).
 """
 
+from django.conf import settings
 from django.db import models
 
 
@@ -50,6 +51,11 @@ class DailyPrice(models.Model):
 
 
 class VirtualAccount(models.Model):
+    # T-010: 계좌를 Django 사용자와 1:1로 연결한다. owner 없는 행은 연결 전 legacy 계좌다.
+    owner = models.OneToOneField(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True,
+        db_column="owner_id", related_name="virtual_account",
+    )
     created_at = models.DateTimeField()
     policy_version = models.TextField()
     initial_cash_krw = models.BigIntegerField()
@@ -57,14 +63,9 @@ class VirtualAccount(models.Model):
     sell_fee_rate = models.FloatField()
     sell_tax_rate = models.FloatField()
     slippage_bps = models.IntegerField()
-    # 단일 로컬 계좌만 존재하도록 DB 수준에서 보장(항상 True인 유일 컬럼).
-    singleton = models.BooleanField(default=True, unique=True)
 
     class Meta:
         db_table = "virtual_accounts"
-        constraints = [
-            models.CheckConstraint(condition=models.Q(singleton=True), name="virtual_accounts_singleton_true"),
-        ]
 
 
 class CashLedgerEntry(models.Model):

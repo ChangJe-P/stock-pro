@@ -53,6 +53,16 @@ DB 데이터(영속 볼륨)까지 삭제하려면:
 docker compose down -v
 ```
 
+## 로그인과 접근 제어 (T-010)
+
+Google 로그인으로 사용자마다 독립된 가상 학습 계좌·원장·주문·포트폴리오를 사용합니다. 로그인은 **신원 확인**(openid·email·profile)만 하며 실제 돈·실제 계좌·실제 주문·결제와 무관합니다.
+
+- Google Cloud Console에서 OAuth 2.0 **웹 애플리케이션** 클라이언트를 만들고, 승인된 리디렉션 URI에 `http://localhost:3000/accounts/google/login/callback/`를 등록합니다.
+- 로컬 `.env`에 `GOOGLE_OAUTH_CLIENT_ID`·`GOOGLE_OAUTH_CLIENT_SECRET`·`INITIAL_OWNER_GOOGLE_EMAIL`을 넣고 `docker compose up -d --force-recreate web`로 `web`만 재생성합니다. 값이 비어 있으면 `/login/`은 안전한 설정 안내만 보입니다.
+- `/health`만 비로그인 공개입니다. 대시보드·setup·가상계좌·주문·일봉 조회/수집은 **로그인 필수**이며, 계좌·주문·수집 JSON POST는 세션 CSRF 보호를 사용합니다(아래 API 예시의 비로그인 호출은 이제 401을 받습니다).
+- 저장된 일봉은 모든 로그인 사용자가 읽을 수 있는 **공용 학습 데이터**이며, 수집(저장)은 `INITIAL_OWNER_GOOGLE_EMAIL`과 일치하는 **초기 소유자(운영자)만** 실행합니다.
+- 기존 단일 가상계좌는 초기 소유자가 `/setup`에서 `기존 가상 학습 기록 연결`을 **명시적으로 1회** 선택할 때만 연결되며, 데이터는 삭제·재설정되지 않습니다.
+
 ## 시장 데이터 수집 API (T-002)
 
 국내 주식 **일봉 OHLCV**를 `pykrx` 공개 조회로 한 종목·기간씩 수집해 PostgreSQL에 저장하고 조회하는 backend 전용 API입니다. 이후 가상 주문의 다음 거래일 시가 체결·수익률 계산의 입력값으로 쓰입니다.
