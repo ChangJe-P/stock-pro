@@ -3,17 +3,17 @@ task_id: T-009
 reviewer: Codex
 reviewed_at: 2026-10-01
 base: dev@1516a52
-branch: codex/ui@719ae46
-decision: 수정 후 가능
+branch: codex/ui@f06affb
+decision: 병합 가능
 ---
 
-# T-009 Codex 검증 결과
+# T-009 Codex 검토 기록
 
 ## 결론
 
-**수정 후 가능**. Django UI 구조, 기존 읽기 전용 동작, Docker 기반 자동 테스트는 확인됐으나, T-009 완료 기준 4의 양수 부호(`+`)가 실제 화면에 없다. P1 한 건을 수정한 뒤 재검증한다.
+최초 검토에서는 양수 손익·수익률의 `+` 부호 누락을 P1으로 발견했다. Claude가 `9c1e8dd`에서 이를 수정했고, 아래 **최종 재검증**에서 독립 실행과 실제 렌더링으로 해결을 확인했다.
 
-## 증거 범위
+## 최초 검토 증거 범위 (수정 전)
 
 - 인수인계: `docs/handoffs/T-009-claude-handoff.md` (`719ae46`)
 - 구현 커밋: `176acce`
@@ -67,6 +67,42 @@ No changes detected
 - 새 외부 URL·script·CDN·frontend dependency·환경변수·비밀값은 T-009 diff에서 확인되지 않았다.
 - Claude가 보고한 먼저 실패한 render 테스트 실행은 현재 Git 상태만으로 독립 재현할 수 없으므로, 이 검토에서는 인수인계 주장으로만 기록한다. 현재 64개 테스트의 통과는 Codex가 독립 확인했다.
 
+## 최종 재검증 (수정 후)
+
+### 독립 실행 결과
+
+```text
+docker compose exec web python manage.py test trading
+Ran 67 tests ... OK
+
+docker compose exec web python manage.py check
+System check identified no issues (0 silenced).
+
+docker compose exec web python manage.py makemigrations --check --dry-run
+No changes detected
+```
+
+- `SignRenderTests`는 양수 `+20000`·`+20.00%`·`+2.00%`, 음수 `-20000`·`-20.00%`·`-2.00%`, 중립 무부호를 확인한다.
+- 새 브라우저 탭의 실제 양수 데이터는 `+29`, `+0.00%`, `+0.97%`, `이익`으로 렌더링됐다.
+- 손실 상태 수동 확인 때 임시로 바꿨다는 일봉 종가(`005930`, `2024-01-03`)는 Codex 읽기 전용 조회에서 `1011`로 원복된 것을 확인했다.
+
+### 최종 완료 기준 판정
+
+| 기준 | 최종 판정 | 근거 |
+|---|---|---|
+| 1. 가상 학습 장부와 실제 두 화면 navigation | 충족 | template과 새 브라우저 탭의 `/`·`/setup` 링크 |
+| 2. 실제 데이터만 재배치 | 충족 | 기존 context만 쓰는 `.dashboard-grid`, view/service/model 변경 없음 |
+| 3. `/setup` 기존 기능 유지 + 3단계 설명 | 충족 | form action·CSRF·조건 분기 유지, 흐름 안내 렌더링 확인 |
+| 4. 색·상태 텍스트·`+`/`-` 부호 | 충족 | CSS 색상 매핑, `SignRenderTests`, 실제 양수 렌더링 |
+| 5. 반응형·모바일 표 | 충족 | 1025px/768px/440px breakpoint와 `data-label`; Claude의 수동 확인은 인수인계에 분리 기록 |
+| 6. Template/static CSS/semantic만 사용 | 충족 | 새 JavaScript·외부 리소스·의존성 없음 |
+| 7. 기존 계약과 읽기 전용 보장 | 충족 | 허용 범위 diff와 독립 67개 테스트 |
+| 8. 자동·수동 결과 분리 | 충족 | 인수인계와 이 검토에서 분리 기록 |
+
+### P2 참고 사항
+
+손실 색상 확인을 위해 개발 DB의 일봉 종가 한 건을 일시 변경·원복한 절차는 남은 데이터 변경 없이 끝났고, 병합을 막지 않는다. 이후 화면 상태 검증은 Django 테스트 DB 또는 별도 검증 데이터베이스에서 수행한다.
+
 ## 병합 판단
 
-P1 수정과 재검증 전에는 push·PR·`dev` 병합을 준비하지 않는다.
+P0/P1은 없다. `codex/ui`를 원격에 push하고 T-009의 `dev` 병합 요청을 준비할 수 있다. 실제 push·PR 생성·병합은 사용자의 별도 요청 뒤에만 한다.
