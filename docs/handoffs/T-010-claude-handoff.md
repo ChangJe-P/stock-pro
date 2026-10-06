@@ -1,11 +1,21 @@
 ---
 task_id: T-010
 branch: codex/auth
-commit: b9f97bc
+commit: f5fd821
 status: complete
 ---
 
 # Claude Code 구현 인수인계
+
+> 갱신(2026-10-06): Codex 검토 P1 3건 대응. 구현 `b9f97bc`, 최초 인수인계 `bdaa62f`, P1 수정 `f5fd821`. 아래 "Codex 검토 대응" 절 참조.
+
+## Codex 검토 대응 (P1 × 3)
+
+| 지적 | 대응 | 근거 |
+|---|---|---|
+| P1-1 — 비로그인 JSON POST가 CsrfViewMiddleware에서 403(CSRF)로 끝나 401 계약 위반 | `_login_required_json`을 `csrf_exempt` + (로그인 사용자에 한해) `csrf_protect`로 변경. 비로그인은 CSRF 검사 이전에 정확히 `401 {"detail":"로그인이 필요합니다."}`, 로그인 사용자의 토큰 없는 상태 변경 POST는 403. GET에는 영향 없음 | `CsrfAndCollectPermissionTests.test_unauth_json_post_is_401_even_under_csrf_enforcement`(enforce_csrf client로 401), `test_csrf_required_on_user_post`(로그인 403); Compose에서 `POST /virtual-orders` 비로그인 → 401 재확인 |
+| P1-2 — lock이 Docker 실제 설치와 불일치, 무관한 FastAPI·pytest 포함 | `docker compose run --rm --no-deps web pip freeze`로 lock 전체 재생성. psycopg 3.3.6·pykrx 1.2.9·django-allauth 65.19.6과 일치, FastAPI·pytest 계열 제거 | `backend/requirements.lock.txt` |
+| P1-3 — PROJECT_SPEC가 '단일 로컬 사용자'로 남음 | `docs/PROJECT_SPEC.md` MVP 고정 범위를 Google 로그인 사용자별 독립 가상계좌로 갱신(가상 전용 원칙 유지) | `docs/PROJECT_SPEC.md` |
 
 ## 작업 요약
 
@@ -53,7 +63,7 @@ status: complete
 |---|---|
 | `python manage.py check` | System check identified no issues |
 | `python manage.py makemigrations --check --dry-run` | No changes detected |
-| `python manage.py test trading` | **Ran 82 tests … OK** |
+| `python manage.py test trading` | **Ran 83 tests … OK**(P1 수정으로 CSRF 강제 하 비로그인 401 회귀 1건 추가) |
 
 `test_auth.py` 커버리지: OAuth 미설정 시 `/login/` 200 안전 안내(비밀값·provider 시작 URL 미노출), 비로그인 HTML 302→`/login/`, 비로그인 JSON 401(계좌 미생성), `/health` 공개; 두 사용자 계좌·주문·대시보드 격리와 타인 주문 ID 404, 사용자 범위 전환 뒤 다음 거래일 시가 체결·반복 체결 중복 방지; legacy 본인 1회 연결·멱등·행 보존, 비소유자 403·비노출, PRG; 로그인 사용자도 CSRF 없는 POST 403(HTML·JSON), 비운영자 수집 403·`fetch_ohlcv` 미호출·수집 기록 0, 로그인 사용자 공용 일봉 읽기; migration executor로 0001→0002 기존 계좌·원장·주문 보존·owner NULL.
 
@@ -83,6 +93,7 @@ status: complete
 | `GET /login/` | HTTP 200 (OAuth 미설정 안전 안내, 비밀값·provider URL 없음) |
 | `GET /`(비로그인) | HTTP 302 → `/login/?next=/` |
 | `GET /virtual-account`(비로그인) | HTTP 401 `{"detail":"로그인이 필요합니다."}` |
+| `POST /virtual-orders`(비로그인, CSRF 토큰 없음) | HTTP 401 `{"detail":"로그인이 필요합니다."}` — CSRF 403이 아님(P1-1 수정 재확인) |
 | `GET /health` | HTTP 200 (공개) |
 
 ### 실제 Google OAuth 로그인 (미검증)
@@ -111,5 +122,5 @@ status: complete
 - main/dev로의 병합·push·PR은 규칙에 따라 하지 않았다. Codex 검증 후 진행.
 
 ## 최종 보고
-- 커밋: `b9f97bc`(구현), 본 인수인계는 별도 커밋
+- 커밋: `b9f97bc`(구현), `bdaa62f`(최초 인수인계), `f5fd821`(검토 P1 수정: 401-before-CSRF·lock·spec)
 - 인수인계 파일: `docs/handoffs/T-010-claude-handoff.md`
