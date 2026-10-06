@@ -2,7 +2,7 @@
 task_id: T-010
 branch: codex/auth
 base: origin/dev (1cfa343)
-reviewed_head: bdaa62f
+reviewed_head: f5fd821
 implementation_commit: b9f97bc
 status: changes_requested
 reviewed_at: 2026-10-06
@@ -72,3 +72,35 @@ reviewed_at: 2026-10-06
 ## 병합 판단
 
 **수정 후 가능.** P0는 없지만 P1 세 가지가 남아 있어 현재 상태로 push·PR·병합을 진행하지 않는다. Claude Code가 P1을 수정하고 인수인계를 갱신하면, Codex가 CSRF 재현·Docker lock·Django 전체 검증을 다시 실행한다.
+
+---
+
+## 수정본 재검토 — `f5fd821`
+
+### P1 조치 확인
+
+| 이전 지적 | 독립 확인 결과 | 판정 |
+|---|---|---|
+| 비로그인 JSON POST의 401 계약 | CSRF 강제 Django client로 `POST /virtual-orders`를 직접 실행해 `401`, `application/json`, `{"detail":"로그인이 필요합니다."}`를 확인했다. 83개 테스트에는 세 JSON POST 경로의 회귀 검증도 추가됐다. 로그인 사용자의 토큰 없는 POST 403은 해당 테스트로 확인했다. | 해결 |
+| Docker lock 실제 설치 불일치 | 새 `web` 이미지를 빌드한 뒤 실제 설치 버전을 확인했다: Django 5.2.17, django-allauth 65.19.6, psycopg 3.3.6, pykrx 1.2.9. `requirements.lock.txt`와 일치하며 FastAPI·pytest 계열 항목은 제거됐다. | 해결 |
+| 상위 명세의 단일 로컬 사용자 표현 | `docs/PROJECT_SPEC.md` MVP 고정 범위가 Google 로그인 사용자별 독립 가상계좌와 실제 돈·실제 계좌 비사용 원칙으로 바뀌었다. | 해결 |
+
+### 수정본 독립 실행
+
+| 명령 | 결과 |
+|---|---|
+| `docker compose build web` | 성공 |
+| `docker compose run --rm --no-deps web python manage.py check` | `System check identified no issues` |
+| `docker compose run --rm --no-deps web python manage.py makemigrations --check --dry-run` | `No changes detected` |
+| `docker compose run --rm --no-deps web python manage.py test trading` | 83개 실행, `OK` |
+
+### P2 — 현재 문서의 용어가 실제 인증 경계와 다름
+
+- 위치: `README.md`의 T-003 계좌 설명과 T-010 접근 제어 설명, `docs/ENVIRONMENT.md`의 가상 거래 정책 설명.
+- 증거: 현재 서비스와 `PROJECT_SPEC.md`는 사용자별 계좌인데 위 문서에는 아직 `단일 로컬 사용자/가상계좌`라고 적혀 있다. 또한 README는 `csrf_exempt`가 제거됐다고 하나, 실제 구현은 비로그인 JSON 요청에 401을 먼저 반환하기 위해 외부 래퍼에 한정해 `csrf_exempt`를 두고 로그인 사용자 요청에 내부 `csrf_protect`를 적용한다.
+- 영향: 기능상 실제 CSRF 보호와 사용자 격리는 통과했지만, 이후 작업자가 문서만 읽으면 사용자 범위와 보안 경계를 오해할 수 있다.
+- 수정 기준: 코드를 바꾸지 말고 위 문구를 `로그인 사용자별 가상계좌`로 맞추며, JSON 경계의 실제 동작(비로그인 401, 로그인 상태 변경은 CSRF 403)을 정확히 기술한다. 비밀값은 쓰지 않는다.
+
+### 최종 판단
+
+**P0·P1은 모두 해결됐다.** 실제 Google OAuth 로그인과 실제 KRX 수집은 사용자 설정·환경이 필요한 미검증 항목으로 계속 분리한다. 다만 위 P2 문서 정합성은 이번 T-010 범위의 문서 변경으로 함께 바로잡아야 한다. 이 P2 수정과 인수인계 갱신이 끝나면, 서비스 코드 재검증 없이 문서 diff 확인 후 검증 완료로 전환할 수 있다.
