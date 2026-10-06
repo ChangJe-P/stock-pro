@@ -58,10 +58,33 @@
 - Docker Compose는 기존 `web.env_file: .env`로만 전달한다. `db` 등 다른 서비스에는 전달하지 않는다.
 - `MARKET_DATA_PROVIDER`가 `pykrx`가 아니거나 `KRX_ID`·`KRX_PW` 중 하나라도 비어 있으면 pykrx import·로그인·외부 요청 없이 안전한 설정 오류(503)로 끝낸다.
 - `.env`를 수정한 뒤에는 이미지 재빌드 없이 `docker compose up -d --force-recreate web`로 `web`만 다시 만들면 새 값이 적용된다.
+- KRX 자격증명은 저장용 일봉 수집을 위한 **로컬 운영자 설정**이며, 사용자에게 입력받거나 저장·표시하지 않는다. 수집은 초기 소유자(운영자)만 실행한다(T-010).
+
+## Google 로그인 변수 (T-010)
+
+Google 로그인은 사용자의 학습 기록을 분리하기 위한 **신원 확인**이다. 실제 증권계좌·실제 돈·결제·실제 주문과 무관하다. 요청 권한은 `openid`·`email`·`profile`뿐이다.
+
+| 변수 | 용도 | 로컬 값 |
+|---|---|---|
+| GOOGLE_OAUTH_CLIENT_ID | Google OAuth 클라이언트 식별자 | 로컬 `.env`에만 입력 |
+| GOOGLE_OAUTH_CLIENT_SECRET | 서버 전용 OAuth 비밀값 | 로컬 `.env`에만 입력 |
+| INITIAL_OWNER_GOOGLE_EMAIL | 기존 단일 가상계좌를 1회 연결할 본인 Google 이메일 | 로컬 `.env`에만 입력 |
+
+- 실제 값은 **루트 `.env`에만** 둔다. `.env.example`·Git·인수인계·테스트 fixture·화면·로그·오류 응답에 넣지 않는다.
+- Client ID·Secret은 Django 설정 계층의 `SOCIALACCOUNT_PROVIDERS`로만 구성하고 DB `SocialApp`에 저장하지 않는다. 값·길이·마스킹을 어떤 output에도 노출하지 않는다.
+- 두 OAuth 값이 모두 있어야 로그인이 활성화된다. 하나라도 비어 있으면 `/login/`은 안전한 설정 안내만 보이고 OAuth를 시작하지 않는다.
+- Google Cloud Console → OAuth 2.0 클라이언트(웹 애플리케이션)의 **승인된 리디렉션 URI**에 `http://localhost:3000/accounts/google/login/callback/`를 등록한다. 동의 화면·클라이언트 생성은 사용자가 직접 수행한다.
+- `.env` 수정 뒤 `docker compose up -d --force-recreate web`로 `web`만 재생성하면 새 값이 적용된다.
+
+### 접근 제어(T-010)
+
+- `/health`만 비로그인 공개다. 대시보드·setup·가상계좌·원장·주문·일봉 조회/수집은 로그인 필수다.
+- 비로그인 HTML은 `/login/`으로 이동하고, 비로그인 JSON API는 `401 {"detail":"로그인이 필요합니다."}`를 반환한다.
+- 계좌·주문·수집 JSON 상태 변경 요청은 비로그인이면 CSRF 검사보다 먼저 `401 {"detail":"로그인이 필요합니다."}` JSON을 반환하고, 로그인 사용자의 요청은 같은 origin 세션 CSRF 토큰이 없으면 `403`이 된다. 타 사용자의 주문 ID는 존재를 밝히지 않고 404로 처리한다.
 
 ## 가상 거래 정책 변수 (T-003, 학습용 시뮬레이션 v1)
 
-단일 로컬 가상계좌의 최초 현금과 거래 비용 가정이다. **실제 증권사 수수료·법정 세율이 아니며 투자 조언이 아니다.** 학습용 시뮬레이션 정책 버전 v1이다.
+로그인 사용자별 독립 가상계좌의 최초 현금과 거래 비용 가정이다. **실제 증권사 수수료·법정 세율이 아니며 투자 조언이 아니다.** 학습용 시뮬레이션 정책 버전 v1이다.
 
 | 변수 | 용도 | 로컬 값(v1) |
 |---|---|---|

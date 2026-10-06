@@ -16,6 +16,15 @@
         <a href="{% url 'dashboard' %}">대시보드</a>
         <a href="{% url 'setup' %}" aria-current="page">시작·데이터 준비</a>
       </nav>
+      {% if user_email %}
+      <div class="user-bar">
+        <span class="user-email">{{ user_email }}</span>
+        <form method="post" action="{% url 'logout' %}" class="logout-form">
+          {% csrf_token %}
+          <button type="submit">로그아웃</button>
+        </form>
+      </div>
+      {% endif %}
     </header>
 
     <main>
@@ -52,6 +61,17 @@
         {% elif policy_error %}
           <p class="notice warn" role="alert">가상 거래 정책 설정이 유효하지 않아 계좌를 시작할 수 없습니다: {{ policy_error }} 설정을 확인한 뒤 다시 시도하세요.</p>
         {% else %}
+          {% if can_claim_legacy %}
+            <div class="legacy-claim">
+              <h3>기존 가상 학습 기록 연결</h3>
+              <p>이 Google 계정은 기존 가상 학습 기록(계좌·현금 원장·주문)을 <strong>한 번만</strong> 연결할 수 있습니다. 연결하면 기존 기록이 이 계정에 귀속되며, 데이터는 삭제·재설정되지 않습니다.</p>
+              <form method="post" action="{% url 'setup_legacy_claim' %}" class="action-form">
+                {% csrf_token %}
+                <button type="submit">기존 가상 학습 기록 연결</button>
+              </form>
+              <p class="help">또는 아래에서 새 가상계좌를 시작할 수 있습니다.</p>
+            </div>
+          {% endif %}
           <p>아직 가상 학습 계좌가 없습니다. 아래 값은 검증된 정책 설정에서 읽은 학습용 가정입니다.</p>
           <dl class="kv">
             <dt>시작 가상 현금 <span class="unit">(KRW)</span></dt><dd>{{ policy.initial_cash_krw }}</dd>
@@ -65,13 +85,14 @@
         {% endif %}
       </section>
 
-      {# 2. 일봉 수동 수집 form #}
+      {# 2. 일봉 수동 수집 form (운영자만) #}
       <section class="collect">
         <h2>일봉 수동 수집</h2>
-        <p>사용자가 입력한 한 종목·기간의 일봉을 저장된 제공처(pykrx)로 <strong>직접 요청할 때만</strong> 수집합니다. 계좌가 없어도 수집할 수 있습니다(가격은 계좌와 독립된 학습 재료).</p>
+        <p>저장된 일봉은 모든 로그인 사용자가 읽을 수 있는 공용 학습 데이터입니다. 수집(저장)은 운영자(초기 소유자)만 직접 요청할 수 있습니다.</p>
         {% if collect_error %}
           <p class="notice warn" role="alert">{{ collect_error }}</p>
         {% endif %}
+        {% if can_manage_market_data %}
         <form method="post" action="{% url 'setup_market_data_collect' %}" class="stack-form">
           {% csrf_token %}
           <div class="form-field">
@@ -93,6 +114,9 @@
           <button type="submit">일봉 수집</button>
         </form>
         <p class="help">가격 단위는 KRW, 수량 단위는 주입니다. 수집은 비조정(adjusted=False) 일봉만 저장하며, 외부 조회가 실패해도 다른 제공처로 우회하거나 자동 재시도하지 않습니다.</p>
+        {% else %}
+        <p class="help">이 계정은 수집 권한이 없습니다. 저장된 공용 일봉은 대시보드와 조회 API로 읽을 수 있습니다.</p>
+        {% endif %}
       </section>
 
       {# 3. 수집 실행 결과(PRG 뒤 GET에서 표시) #}

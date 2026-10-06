@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 from django.db import IntegrityError, transaction
 from django.db.models import Sum
 
+from . import ownership
 from .config import VirtualPolicyError, load_virtual_policy
 from .errors import ApiError
 from .models import CashLedgerEntry, VirtualAccount
@@ -49,45 +50,45 @@ def _not_found() -> ApiError:
     return ApiError(404, "가상 학습 계좌가 아직 없습니다. 먼저 초기화하세요.")
 
 
-def initialize_account() -> dict:
-    """계좌가 없으면 설정 스냅샷으로 한 번만 생성하고, 있으면 기존 계좌를 그대로 반환한다."""
+def initialize_account(user) -> dict:
+    """로그인 사용자의 계좌가 없으면 설정 스냅샷으로 한 번만 생성하고, 있으면 그대로 반환한다."""
     # 설정 검증을 먼저 수행해, 오류 시 DB 부분 기록 없이 명시적으로 실패한다.
     try:
         policy = load_virtual_policy()
     except VirtualPolicyError as exc:
         raise ApiError(500, str(exc))
 
-    account = VirtualAccount.objects.first()
+    account = ownership.get_account_for_user(user)
     if account is None:
         now = datetime.now(timezone.utc)
         try:
             with transaction.atomic():
                 account = VirtualAccount.objects.create(
-                    created_at=now, policy_version=policy.policy_version,
+                    owner=user, created_at=now, policy_version=policy.policy_version,
                     initial_cash_krw=policy.initial_cash_krw, buy_fee_rate=policy.buy_fee_rate,
                     sell_fee_rate=policy.sell_fee_rate, sell_tax_rate=policy.sell_tax_rate,
-                    slippage_bps=policy.slippage_bps, singleton=True,
+                    slippage_bps=policy.slippage_bps,
                 )
                 CashLedgerEntry.objects.create(
                     account=account, created_at=now, entry_type=OPENING_BALANCE,
                     amount_krw=policy.initial_cash_krw, description="가상 학습 계좌 최초 적립",
                 )
         except IntegrityError:
-            # 동시 초기화 경합. DB 유일 제약이 두 번째 생성을 막았으므로 기존 계좌를 반환한다.
-            account = VirtualAccount.objects.first()
+            # 동시 초기화 경합. owner 유일 제약이 두 번째 생성을 막았으므로 기존 계좌를 반환한다.
+            account = ownership.get_account_for_user(user)
 
     return _account_response(account, available_cash(account))
 
 
-def get_account() -> dict:
-    account = VirtualAccount.objects.first()
+def get_account(user) -> dict:
+    account = ownership.get_account_for_user(user)
     if account is None:
         raise _not_found()
     return _account_response(account, available_cash(account))
 
 
-def list_cash_ledger() -> dict:
-    account = VirtualAccount.objects.first()
+def list_cash_ledger(user) -> dict:
+    account = ownership.get_account_for_user(user)
     if account is None:
         raise _not_found()
     entries = (

@@ -13,6 +13,7 @@ from decimal import Decimal
 from unittest.mock import patch
 
 import pandas as pd
+from django.contrib.auth.models import User
 from django.db import OperationalError
 from django.test import Client, TestCase, override_settings
 
@@ -37,7 +38,26 @@ POLICY = dict(
     # 테스트 전용 가짜 자격증명(실제 값 아님). 존재 여부 판정과 비노출 검증에만 쓴다.
     KRX_ID="test-krx-id",
     KRX_PW="test-krx-pw",
+    # T-010: 초기 소유자(운영자) 이메일. 수집 권한·legacy 연결 판정에 쓴다.
+    INITIAL_OWNER_GOOGLE_EMAIL="owner@example.com",
 )
+
+OWNER_EMAIL = "owner@example.com"
+
+
+def _make_user(email, username=None):
+    return User.objects.create_user(username=username or email, email=email, password="x")
+
+
+class AuthedTestCase(TestCase):
+    """로그인(force_login)된 운영자 사용자로 기존 화면·API 테스트를 수행한다.
+
+    self.user는 INITIAL_OWNER_GOOGLE_EMAIL과 일치해 수집 권한을 가진다.
+    """
+
+    def setUp(self):
+        self.user = _make_user(OWNER_EMAIL)
+        self.client.force_login(self.user)
 
 
 def _df(rows):
@@ -84,7 +104,7 @@ class MarketDataValidationTests(TestCase):
 
 
 @override_settings(**POLICY)
-class MarketDataApiTests(TestCase):
+class MarketDataApiTests(AuthedTestCase):
     def test_collect_stores_rows_and_run(self):
         df = _df([("2024-01-02", 100, 110, 90, 105, 1000), ("2024-01-10", 100, 110, 90, 105, 1000)])
         with patch("trading.market_data.fetch_ohlcv", return_value=df):
@@ -147,7 +167,7 @@ class PolicyValidationTests(TestCase):
 
 
 @override_settings(**POLICY)
-class VirtualAccountTests(TestCase):
+class VirtualAccountTests(AuthedTestCase):
     def test_initialize_creates_single_and_opening(self):
         res = self.client.post("/virtual-account/initialize")
         self.assertEqual(res.status_code, 200)
@@ -176,7 +196,7 @@ class ComputeTests(TestCase):
 
 
 @override_settings(**POLICY)
-class OrderTests(TestCase):
+class OrderTests(AuthedTestCase):
     def _init(self):
         self.client.post("/virtual-account/initialize")
 
@@ -253,7 +273,8 @@ class OrderTests(TestCase):
         self.assertEqual(self.client.get("/virtual-account").json()["available_cash_krw"], 1000000)
 
 
-class JsonBodyContractTests(TestCase):
+@override_settings(INITIAL_OWNER_GOOGLE_EMAIL="owner@example.com")
+class JsonBodyContractTests(AuthedTestCase):
     """공통 JSON 파서는 문법상 유효해도 객체(dict)가 아니면 500이 아닌 안전한 422 JSON을 낸다."""
 
     def test_collect_rejects_json_array_body(self):
@@ -269,7 +290,7 @@ class JsonBodyContractTests(TestCase):
         self.assertIn("detail", res.json())
 
 
-class DashboardTests(TestCase):
+class DashboardTests(AuthedTestCase):
     def test_dashboard_read_only_renders(self):
         res = self.client.get("/")
         self.assertEqual(res.status_code, 200)
@@ -279,11 +300,14 @@ class DashboardTests(TestCase):
 
 # --- T-006 포트폴리오 계산 ---------------------------------------------------
 
-def _account(initial=1_000_000):
+def _account(initial=1_000_000, owner=None):
+    # owner가 없으면 테스트용 사용자를 하나 만들어 소유시킨다(T-010: 계좌는 사용자 1:1).
+    if owner is None:
+        owner = _make_user(f"acc{VirtualAccount.objects.count()}@example.com")
     now = datetime(2024, 1, 1, tzinfo=timezone.utc)
     acc = VirtualAccount.objects.create(
-        created_at=now, policy_version="v1", initial_cash_krw=initial,
-        buy_fee_rate=0.00015, sell_fee_rate=0.00015, sell_tax_rate=0.0, slippage_bps=0, singleton=True,
+        owner=owner, created_at=now, policy_version="v1", initial_cash_krw=initial,
+        buy_fee_rate=0.00015, sell_fee_rate=0.00015, sell_tax_rate=0.0, slippage_bps=0,
     )
     CashLedgerEntry.objects.create(
         account=acc, created_at=now, entry_type="opening_balance", amount_krw=initial, description="개시",
@@ -316,7 +340,7 @@ def _price(ticker, d, close):
     )
 
 
-class PortfolioCalcTests(TestCase):
+class PortfolioCalcTests(AuthedTestCase):
     def test_single_holding_valuation(self):
         acc = _account(1_000_000)
         _fill(acc, "005930", qty=10, gross=100_000, fee=0, exec_date=date(2024, 1, 3))
@@ -405,7 +429,7 @@ class PortfolioCalcTests(TestCase):
         self.assertEqual(p["summary"]["total_pnl_krw"], 0)
 
     def test_get_dashboard_is_read_only(self):
-        acc = _account()
+        acc = _account(owner=self.user)
         _fill(acc, "005930", qty=1, gross=10_000, fee=0, exec_date=date(2024, 1, 3))
         _price("005930", date(2024, 1, 3), 10_000)
         before_orders = VirtualBuyOrder.objects.count()
@@ -419,7 +443,7 @@ class PortfolioCalcTests(TestCase):
         self.assertEqual(DailyPrice.objects.count(), before_prices)
 
 
-class PortfolioInvalidDataTests(TestCase):
+class PortfolioInvalidDataTests(AuthedTestCase):
     """비정상 filled 주문(0/음수 금액)·무효 계좌 데이터를 예외 없이 계산 불가로 처리한다."""
 
     def _price_005930(self):
@@ -465,7 +489,7 @@ class PortfolioInvalidDataTests(TestCase):
         self.assertEqual(p["unavailable_reason"], portfolio.REASON_INVALID_ACCOUNT_DATA)
 
     def test_get_dashboard_200_and_read_only_on_bad_data(self):
-        acc = _account()
+        acc = _account(owner=self.user)
         _fill(acc, "005930", qty=10, gross=0, fee=0, exec_date=date(2024, 1, 3))
         self._price_005930()
         before = (VirtualBuyOrder.objects.count(), CashLedgerEntry.objects.count(), DailyPrice.objects.count())
@@ -477,19 +501,19 @@ class PortfolioInvalidDataTests(TestCase):
         self.assertEqual(before, after)
 
 
-class DashboardRenderTests(TestCase):
+class DashboardRenderTests(AuthedTestCase):
     def test_no_account_notice(self):
         res = self.client.get("/")
         self.assertEqual(res.status_code, 200)
         self.assertContains(res, "아직 가상 학습 계좌가 없습니다")
 
     def test_empty_holdings_notice(self):
-        _account()
+        _account(owner=self.user)
         res = self.client.get("/")
         self.assertContains(res, "보유 종목이 없습니다")
 
     def test_calculation_unavailable_notice(self):
-        acc = _account()
+        acc = _account(owner=self.user)
         VirtualBuyOrder.objects.create(
             account=acc, ticker="005930", quantity=1, decision_trade_date=date(2024, 1, 2),
             created_at=datetime(2024, 1, 5, tzinfo=timezone.utc), status="filled",
@@ -500,7 +524,7 @@ class DashboardRenderTests(TestCase):
         self.assertContains(res, "계산할 수 없습니다")
 
     def test_db_error_notice(self):
-        with patch("trading.views.VirtualAccount.objects.first", side_effect=Exception("db down")):
+        with patch("trading.ownership.get_account_for_user", side_effect=OperationalError("db down")):
             res = self.client.get("/")
         self.assertEqual(res.status_code, 200)
         self.assertContains(res, "데이터베이스에 연결할 수 없습니다")
@@ -509,7 +533,7 @@ class DashboardRenderTests(TestCase):
 # --- T-007 시작·데이터 준비 화면 --------------------------------------------
 
 @override_settings(**POLICY)
-class SetupScreenTests(TestCase):
+class SetupScreenTests(AuthedTestCase):
     def test_get_setup_is_read_only(self):
         before = (
             VirtualAccount.objects.count(), VirtualBuyOrder.objects.count(),
@@ -559,7 +583,9 @@ class SetupScreenTests(TestCase):
         self.assertNotContains(res, "가상 학습 계좌 시작")
 
     def test_csrf_protected_forms(self):
+        # 로그인된 사용자라도 CSRF 토큰 없는 POST는 403이어야 한다.
         c = Client(enforce_csrf_checks=True)
+        c.force_login(self.user)
         self.assertEqual(c.post("/setup/account/initialize").status_code, 403)
         self.assertEqual(
             c.post("/setup/market-data/collect", {"ticker": "005930", "from_date": "2024-01-02", "to_date": "2024-01-05"}).status_code,
@@ -664,7 +690,7 @@ def _fake_pykrx(get_market_ohlcv):
 
 
 @override_settings(**POLICY)
-class KrxAuthConfigTests(TestCase):
+class KrxAuthConfigTests(AuthedTestCase):
     def _assert_blocked(self):
         # 게이트가 fetch(=pykrx import) 이전에 막는지 확인한다.
         with patch("trading.market_data.fetch_ohlcv", side_effect=AssertionError("pykrx import/호출")):
@@ -701,7 +727,7 @@ class KrxAuthConfigTests(TestCase):
 
 
 @override_settings(**POLICY)
-class KrxUpstreamNonLeakTests(TestCase):
+class KrxUpstreamNonLeakTests(AuthedTestCase):
     def test_upstream_stdout_and_exception_not_leaked_on_failure(self):
         def boom(*a, **k):
             print(_FAKE_UPSTREAM)  # upstream이 표준 출력에 로그인 정보를 씀
@@ -742,7 +768,7 @@ class KrxUpstreamNonLeakTests(TestCase):
 # --- T-009 화면 render 계약 (먼저 실패 → template/CSS 최소 변경으로 통과) -------
 
 @override_settings(**POLICY)
-class UiRefreshRenderTests(TestCase):
+class UiRefreshRenderTests(AuthedTestCase):
     def test_dashboard_has_common_nav_and_identity(self):
         res = self.client.get("/")
         self.assertEqual(res.status_code, 200)
@@ -772,9 +798,9 @@ class UiRefreshRenderTests(TestCase):
 
 # --- T-009 P1: 양수 손익·수익률의 + 부호 (음수는 -, 중립은 무부호) --------------
 
-class SignRenderTests(TestCase):
+class SignRenderTests(AuthedTestCase):
     def test_positive_values_get_plus_sign(self):
-        acc = _account(1_000_000)
+        acc = _account(1_000_000, owner=self.user)
         _fill(acc, "005930", qty=10, gross=100_000, fee=0, exec_date=date(2024, 1, 3))
         _price("005930", date(2024, 1, 3), 12_000)  # 이익
         res = self.client.get("/")
@@ -784,7 +810,7 @@ class SignRenderTests(TestCase):
         self.assertContains(res, "+2.00%")   # 총 수익률(양수)
 
     def test_negative_values_keep_minus_no_plus(self):
-        acc = _account(1_000_000)
+        acc = _account(1_000_000, owner=self.user)
         _fill(acc, "005930", qty=10, gross=100_000, fee=0, exec_date=date(2024, 1, 3))
         _price("005930", date(2024, 1, 3), 8_000)  # 손실
         res = self.client.get("/")
@@ -794,7 +820,7 @@ class SignRenderTests(TestCase):
         self.assertNotContains(res, "+-")  # 음수에 + 를 덧붙이지 않는다
 
     def test_neutral_values_have_no_sign(self):
-        acc = _account(1_000_000)
+        acc = _account(1_000_000, owner=self.user)
         _fill(acc, "005930", qty=10, gross=100_000, fee=0, exec_date=date(2024, 1, 3))
         _price("005930", date(2024, 1, 3), 10_000)  # 변동 없음(0)
         res = self.client.get("/")

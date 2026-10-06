@@ -16,6 +16,13 @@
         <a href="{% url 'dashboard' %}" aria-current="page">대시보드</a>
         <a href="{% url 'setup' %}">시작·데이터 준비</a>
       </nav>
+      <div class="user-bar">
+        <span class="user-email">{{ user_email }}</span>
+        <form method="post" action="{% url 'logout' %}" class="logout-form">
+          {% csrf_token %}
+          <button type="submit">로그아웃</button>
+        </form>
+      </div>
     </header>
 
     <main>
@@ -29,7 +36,11 @@
       <section class="notice info">
         <h2>가상계좌</h2>
         <p class="headline">아직 가상 학습 계좌가 없습니다.</p>
-        <p>JSON API로 계좌를 초기화하면 보유 종목과 평가 결과가 여기에 표시됩니다.</p>
+        {% if can_claim_legacy %}
+          <p><a href="{% url 'setup' %}">시작·데이터 준비</a>에서 기존 가상 학습 기록을 연결하거나 새 가상계좌를 시작할 수 있습니다.</p>
+        {% else %}
+          <p><a href="{% url 'setup' %}">시작·데이터 준비</a>에서 가상계좌 시작을 누르면 보유 종목과 평가 결과가 여기에 표시됩니다.</p>
+        {% endif %}
       </section>
     {% else %}
       <div class="dashboard-grid">
