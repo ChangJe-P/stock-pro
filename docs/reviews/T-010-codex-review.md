@@ -2,9 +2,9 @@
 task_id: T-010
 branch: codex/auth
 base: origin/dev (1cfa343)
-reviewed_head: f5fd821
+reviewed_head: 3d7f8ba
 implementation_commit: b9f97bc
-status: changes_requested
+status: approved
 reviewed_at: 2026-10-06
 ---
 
@@ -104,3 +104,19 @@ reviewed_at: 2026-10-06
 ### 최종 판단
 
 **P0·P1은 모두 해결됐다.** 실제 Google OAuth 로그인과 실제 KRX 수집은 사용자 설정·환경이 필요한 미검증 항목으로 계속 분리한다. 다만 위 P2 문서 정합성은 이번 T-010 범위의 문서 변경으로 함께 바로잡아야 한다. 이 P2 수정과 인수인계 갱신이 끝나면, 서비스 코드 재검증 없이 문서 diff 확인 후 검증 완료로 전환할 수 있다.
+
+---
+
+## P2 문서 수정 재검토 — `3d7f8ba`
+
+| 확인 항목 | Codex 확인 결과 | 판정 |
+|---|---|---|
+| 사용자별 가상계좌 문구 | README의 T-003 설명과 `docs/ENVIRONMENT.md`의 정책 설명이 모두 `로그인 사용자별 독립 가상계좌`로 갱신됐다. legacy 계좌 1회 연결 문구는 과거 계좌 이전 사실을 가리키므로 유지한 것이 맞다. | 해결 |
+| JSON 인증·CSRF 경계 문구 | README와 `docs/ENVIRONMENT.md`가 비로그인 JSON 상태 변경은 401 JSON, 로그인 사용자의 CSRF 토큰 없는 상태 변경은 403이라고 실제 검증 결과와 일치하게 설명한다. | 해결 |
+| 범위·비밀값 | `3d7f8ba`는 README·환경 문서·인수인계만 변경했다. 코드·migration·의존성·테스트·환경값 변경은 없고, 새 비밀값도 없다. | 충족 |
+
+이전 독립 실행에서 통과한 83개 Django 테스트의 대상 코드가 `f5fd821` 이후 변경되지 않았음을 Git diff로 확인했다. 따라서 문서 수정 때문에 테스트를 중복 실행하지 않았다.
+
+## 최종 병합 판단
+
+**승인.** P0·P1·P2는 모두 해결됐다. 실제 Google OAuth 로그인과 실제 KRX 네트워크 수집은 로컬 자격증명·외부 환경이 필요한 미검증 항목으로 남지만, 인수인계에 미검증으로 명확히 분리되어 있으며 이번 병합을 막지 않는다. 사용자 요청이 있으면 `codex/auth`를 push하고 PR을 준비할 수 있다.
