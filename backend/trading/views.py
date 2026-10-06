@@ -19,6 +19,7 @@ from django.db import DatabaseError, connection
 from django.http import HttpResponseRedirect, JsonResponse
 from django.shortcuts import render
 from django.urls import reverse
+from django.views.decorators.csrf import csrf_exempt, csrf_protect
 from django.views.decorators.http import require_http_methods
 
 from . import accounts, market_data, orders, ownership, portfolio
@@ -41,12 +42,22 @@ def _error(exc: ApiError):
 
 
 def _login_required_json(view):
-    """비로그인 JSON API는 정확히 401 JSON을 반환한다(DB를 쓰지 않는다)."""
+    """JSON API 경계.
+
+    - 비로그인 요청은 CSRF 검사보다 먼저 정확히 401 JSON을 반환한다(상태 변경 없음).
+      그래서 view 전체를 csrf_exempt로 두어 CsrfViewMiddleware를 건너뛴다.
+    - 로그인 사용자의 상태 변경(POST 등)은 csrf_protect로 CSRF를 강제한다(없으면 403).
+      안전 메서드(GET)에는 csrf_protect가 영향을 주지 않는다.
+    """
+    protected = csrf_protect(view)
+
+    @csrf_exempt
     @wraps(view)
     def wrapper(request, *args, **kwargs):
         if not request.user.is_authenticated:
             return _json({"detail": "로그인이 필요합니다."}, status=401)
-        return view(request, *args, **kwargs)
+        return protected(request, *args, **kwargs)
+
     return wrapper
 
 

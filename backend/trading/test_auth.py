@@ -199,10 +199,25 @@ class CsrfAndCollectPermissionTests(TestCase):
         c = Client(enforce_csrf_checks=True)
         c.force_login(user)
         self.assertEqual(c.post("/setup/account/initialize").status_code, 403)
-        # JSON API도 CSRF 보호(csrf_exempt 제거).
+        # JSON API도 CSRF 보호(csrf_exempt 제거): 로그인 사용자는 토큰 없는 POST가 403.
         self.assertEqual(
             c.post("/virtual-account/initialize", data="{}", content_type="application/json").status_code, 403
         )
+        self.assertEqual(
+            c.post("/virtual-orders", data="{}", content_type="application/json").status_code, 403
+        )
+
+    def test_unauth_json_post_is_401_even_under_csrf_enforcement(self):
+        # CSRF를 강제한 client로도 비로그인 JSON POST는 CSRF 403이 아니라 정확히 401 JSON이어야 한다.
+        c = Client(enforce_csrf_checks=True)  # 로그인하지 않음
+        for path in ("/virtual-orders", "/virtual-account/initialize", "/market-data/daily-prices/collect"):
+            res = c.post(path, data="{}", content_type="application/json")
+            self.assertEqual(res.status_code, 401, path)
+            self.assertEqual(res.json()["detail"], "로그인이 필요합니다.", path)
+        # 비로그인 요청은 계좌·수집 기록을 만들지 않는다.
+        from trading.models import MarketDataCollectionRun
+        self.assertEqual(VirtualAccount.objects.count(), 0)
+        self.assertEqual(MarketDataCollectionRun.objects.count(), 0)
 
     def test_non_operator_collect_is_403_without_fetch(self):
         user = _user("not-owner@example.com")  # 운영자 아님
