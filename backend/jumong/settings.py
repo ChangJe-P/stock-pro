@@ -67,7 +67,7 @@ TEMPLATES = [
 
 AUTHENTICATION_BACKENDS = [
     "django.contrib.auth.backends.ModelBackend",
-    "allauth.account.auth.backends.AuthenticationBackend",
+    "allauth.account.auth_backends.AuthenticationBackend",
 ]
 
 # 로그인 흐름. 비로그인 HTML은 /login/으로 이동하고, 로그인 성공 후 대시보드로 보낸다.
