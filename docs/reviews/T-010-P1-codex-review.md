@@ -3,7 +3,7 @@ task_id: T-010-P1
 branch: codex/oauth
 base: origin/dev (b0e4331)
 reviewed_head: d67575e
-status: manual_oauth_verification_pending
+status: approved
 reviewed_at: 2026-11-12
 ---
 
@@ -55,4 +55,14 @@ reviewed_at: 2026-11-12
 
 ## 병합 판단
 
-**자동 검증은 승인.** 실제 증상은 브라우저 Google OAuth 완료 시점에 발생했으므로, 병합 요청 준비 전 사용자가 현재 `http://localhost:3000/login/`에서 같은 Google 계정으로 로그인해 대시보드 또는 `/setup`으로 이동하는지 확인해야 한다. 성공하면 이 검토에 수동 확인 결과를 추가하고 최종 승인한다. 실패하면 화면의 오류 문구만 공유하고 OAuth code·state·비밀값·`.env` 내용은 공유하지 않는다.
+**수동 확인 대기.** 실제 증상은 브라우저 Google OAuth 완료 시점에 발생했으므로, 병합 요청 준비 전 사용자가 현재 `http://localhost:3000/login/`에서 같은 Google 계정으로 로그인해 대시보드 또는 `/setup`으로 이동하는지 확인해야 한다. 실패하면 화면의 오류 문구만 공유하고 OAuth code·state·비밀값·`.env` 내용은 공유하지 않는다.
+
+---
+
+## 사용자 수동 OAuth 확인 — 2026-11-12
+
+사용자가 현재 `codex/oauth` 수정본으로 Google 로그인을 수행해 **성공**했다고 보고했다. 이는 이전에 500으로 끝났던 callback 이후 Django 세션 생성 경로가 실제 Google OAuth 흐름에서도 완료됐다는 수동 증거다. OAuth query parameter·비밀값·`.env` 내용은 요청하거나 기록하지 않았다.
+
+## 최종 병합 판단
+
+**승인.** 자동 검증과 사용자 수동 Google 로그인 확인이 모두 완료됐다. P0·P1은 없으며, P2 인수인계 파일 목록 표현은 기능 병합을 막지 않는 문서 개선 사항이다. 사용자 요청이 있으면 `codex/oauth`를 push하고 `dev` 병합 요청을 준비할 수 있다.
