@@ -43,6 +43,24 @@ def _seed_price(ticker, d, open_p, close_p=None):
 
 # --- Task 1: OAuth 설정·인증 경계 ---------------------------------------------
 
+class AuthenticationBackendConfigurationTests(TestCase):
+    """AUTHENTICATION_BACKENDS가 실제 설치된 모듈 경로를 쓰는지 검증한다.
+
+    get_backends()는 설정된 각 백엔드를 import·인스턴스화하므로, allauth 경로가
+    오타('allauth.account.auth.backends')면 ModuleNotFoundError로 실패한다.
+    """
+
+    def test_get_backends_loads_django_and_allauth_backends(self):
+        from django.contrib.auth import get_backends
+        from django.contrib.auth.backends import ModelBackend
+        from allauth.account.auth_backends import AuthenticationBackend
+
+        backend_types = {type(b) for b in get_backends()}
+
+        self.assertIn(ModelBackend, backend_types)
+        self.assertIn(AuthenticationBackend, backend_types)
+
+
 @override_settings(GOOGLE_OAUTH_CLIENT_ID="", GOOGLE_OAUTH_CLIENT_SECRET="")
 class LoginScreenTests(TestCase):
     def test_login_safe_when_oauth_missing(self):
